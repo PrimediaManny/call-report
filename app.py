@@ -263,7 +263,7 @@ if page == "Contacts":
 # ---------- sidebar ----------
 st.sidebar.header("Filters")
 today = date.today()
-picked = st.sidebar.date_input("Date range", value=(today - timedelta(days=7), today))
+picked = st.sidebar.date_input("Date range", value=(today - timedelta(days=7), today), key="f_dates")
 if not isinstance(picked, (list, tuple)) or len(picked) != 2:
     st.info("Pick an end date to finish the date range.")
     st.stop()
@@ -295,17 +295,17 @@ df = df.drop(columns=["_key", "eff", "rep"])
 # Times Called = number of calls to that number inside the selected date range
 df["Times Called"] = df.groupby("To")["To"].transform("count")
 
-directions = st.sidebar.multiselect("Direction", sorted(df["Direction"].dropna().unique()))
-froms = st.sidebar.multiselect("From", sorted(df["From"].dropna().astype(str).unique()))
+directions = st.sidebar.multiselect("Direction", sorted(df["Direction"].dropna().unique()), key="f_direction")
+froms = st.sidebar.multiselect("From", sorted(df["From"].dropna().astype(str).unique()), key="f_from")
 
 # Header label: who is being viewed + date range, e.g. "Amanda Watson · 10/05/2026 to 10/12/2026"
 who = ", ".join(froms) if froms else "All reps"
 with header_slot.container():
     st.markdown(f"#### {who}  ·  {start:%m/%d/%Y} to {end:%m/%d/%Y}")
     st.caption("Times Called counts calls to that number within this date range")
-found = st.sidebar.radio("Lead match", ["All", "Found", "Not Found"], horizontal=True)
-min_times = st.sidebar.number_input("Times Called at least", min_value=1, value=1, step=1)
-search = st.sidebar.text_input("Search (number, company, contact, lead id)")
+found = st.sidebar.radio("Lead match", ["All", "Found", "Not Found"], horizontal=True, key="f_match")
+min_times = st.sidebar.number_input("Times Called at least", min_value=1, value=1, step=1, key="f_min_times")
+search = st.sidebar.text_input("Search (number, company, contact, lead id)", key="f_search")
 
 view = df.copy()
 if directions:
@@ -361,14 +361,18 @@ SORT_COLS = ["From", "Media Market", "Lead Source", "Lead Id", "Date/Time"]
 view = view.sort_values(SORT_COLS, key=_sort_key, na_position="last", kind="stable")
 table = view[CALL_COLS + LEAD_COLS].reset_index(drop=True)
 
+# Orange = several matching leads and nobody has picked/confirmed one yet
+needs_pick = ((view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked")).to_numpy()
+
 STYLE_LIMIT = 10000  # colouring very large tables makes the page slow
 if len(table) <= STYLE_LIMIT:
     shown = (table.style
              .set_properties(subset=LEAD_COLS, **{"background-color": "rgba(255, 230, 0, 0.12)"})
              .map(lambda v: "background-color: rgba(255, 99, 132, 0.25)" if v >= 3 else "",
                   subset=["Times Called"])
-             .map(lambda v: "background-color: rgba(255, 140, 0, 0.35); font-weight: 600" if v >= 2 else "",
-                  subset=["Leads Matched"]))
+             .apply(lambda col: ["background-color: rgba(255, 140, 0, 0.35); font-weight: 600"
+                                 if flag else "" for flag in needs_pick],
+                    subset=["Leads Matched"], axis=0))
 else:
     shown = table
 
@@ -396,7 +400,10 @@ st.download_button("Download as CSV", table.to_csv(index=False).encode("utf-8"),
 
 # ---------- pick a lead for numbers with several matches ----------
 def _reset_table():
-    st.session_state["table_v"] = st.session_state.get("table_v", 0) + 1
+    # Don't rebuild the table (that would reset its sorting/search); just remember this
+    # selection was handled so the box doesn't pop up again until another row is clicked.
+    st.session_state["pick_handled"] = st.session_state.get("pick_current")
+    st.session_state["suppress_pick"] = True  # rows may shift after a pick; don't auto-open on the next load
 
 
 @st.dialog("Pick a lead", width="large")
@@ -421,18 +428,19 @@ def pick_lead_dialog(number: str, current_lead: str, choice: str):
     c1, c2, c3 = st.columns(3)
     if rows:
         lead = leads.iloc[rows[0]]["Lead Id"]
-        if c1.button(f"Use lead {lead}", type="primary", width="stretch"):
+        label = f"Confirm lead {lead}" if lead == current_lead else f"Use lead {lead}"
+        if c1.button(label, type="primary", width="stretch"):
             sb.table("lead_picks").upsert({"phone10": str(number)[-10:], "lead_id": str(lead),
                                            "picked_at": pd.Timestamp.utcnow().isoformat()},
                                           on_conflict="phone10").execute()
-            st.cache_data.clear()
+            load_calls.clear()
             _reset_table()
             st.rerun()
     else:
         c1.button("Use this lead", disabled=True, width="stretch")
     if choice == "Picked" and c2.button("Undo pick (go back to automatic)", width="stretch"):
         sb.table("lead_picks").delete().eq("phone10", str(number)[-10:]).execute()
-        st.cache_data.clear()
+        load_calls.clear()
         _reset_table()
         st.rerun()
     if c3.button("Close", width="stretch"):
@@ -442,7 +450,13 @@ def pick_lead_dialog(number: str, current_lead: str, choice: str):
 
 # ---------- detail for a selected row ----------
 sel = event.selection.rows if event and event.selection else []
-if sel and table.iloc[sel[0]]["Leads Matched"] >= 2:
+st.session_state["pick_current"] = view.iloc[sel[0]]["call_id"] if sel else None
+if not sel:
+    st.session_state["pick_handled"] = None
+if st.session_state.pop("suppress_pick", False):
+    st.session_state["pick_handled"] = st.session_state["pick_current"]
+if (sel and table.iloc[sel[0]]["Leads Matched"] >= 2
+        and st.session_state.get("pick_handled") != st.session_state["pick_current"]):
     r = table.iloc[sel[0]]
     pick_lead_dialog(str(r["To"]), str(r["Lead Id"]), str(view.iloc[sel[0]]["Lead Choice"]))
 if sel:
