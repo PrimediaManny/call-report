@@ -31,9 +31,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 CALL_COLS = ["Direction", "To", "From", "Ext / ID", "Date/Time", "Duration", "Times Called"]
-LEAD_COLS = ["Lead Id", "Leads Matched", "Lead Choice", "Lead Started", "Last Edited", "Lead Source",
+LEAD_COLS = ["Lead Id", "Lead Started", "Last Edited", "Lead Source",
              "Media Market", "Company In Ad", "Contact Name (phase2)", "Lead Owner", "Status",
-             "Phase2 Completed", "Matched On"]
+             "Phase2 Completed", "Matched On", "Leads Matched"]
 RENAME = {
     "direction": "Direction", "to_number": "To", "from_value": "From", "call_time": "Date/Time",
     "duration": "Duration", "lead_id": "Lead Id", "lead_started": "Lead Started",
@@ -388,9 +388,6 @@ event = st.dataframe(
         "Leads Matched": st.column_config.NumberColumn(width="small",
                                                        help="How many MMS leads contain this number. "
                                                             "Click the row to pick one."),
-        "Lead Choice": st.column_config.TextColumn(
-            help="Picked = chosen by hand · Rep's lead = owned by the rep who called · "
-                 "Most recent edit = most recently edited matching lead"),
     },
 )
 
@@ -414,7 +411,7 @@ def pick_lead_dialog(number: str, current_lead: str, choice: str):
         "contact_phone": "Contact Phone", "contact_email": "Contact Email", "lead_owner": "Lead Owner",
         "status": "Status", "phase2_completed": "Phase2 Completed", "matched_on": "Matched On"})
     leads = leads.rename(columns={"Company": "Company In Ad"})
-    leads = leads[["Lead Id", "Market", "Company In Ad", "Lead Owner", "Status", "Matched On"]]
+    leads = leads[["Lead Id", "Market", "Company In Ad", "Lead Owner", "Status", "Last Edited", "Matched On"]]
     st.write(f"**{number}** matches **{len(leads)} leads**. Currently showing **{current_lead}** "
              f"({choice.lower() or 'only match'}). Click a lead, then **Use this lead**. "
              "The choice applies to every call to this number.")
@@ -447,7 +444,7 @@ def pick_lead_dialog(number: str, current_lead: str, choice: str):
 sel = event.selection.rows if event and event.selection else []
 if sel and table.iloc[sel[0]]["Leads Matched"] >= 2:
     r = table.iloc[sel[0]]
-    pick_lead_dialog(str(r["To"]), str(r["Lead Id"]), str(r["Lead Choice"]))
+    pick_lead_dialog(str(r["To"]), str(r["Lead Id"]), str(view.iloc[sel[0]]["Lead Choice"]))
 if sel:
     number = table.iloc[sel[0]]["To"]
     st.subheader(f"All calls to {number} in this date range")
