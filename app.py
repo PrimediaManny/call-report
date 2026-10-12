@@ -89,10 +89,85 @@ def load_calls(start: date, end: date) -> pd.DataFrame:
     return df
 
 
+BASE_DATE = date(1900, 1, 1)  # "from the beginning"
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def load_contacts() -> pd.DataFrame:
-    res = sb.table("contacts").select("from_value, rep").order("from_value").execute()
-    return pd.DataFrame(res.data, columns=["from_value", "rep"])
+    res = (sb.table("contacts").select("id, from_value, rep, effective_from")
+           .order("from_value").order("effective_from").execute())
+    out = pd.DataFrame(res.data, columns=["id", "from_value", "rep", "effective_from"])
+    out["effective_from"] = pd.to_datetime(out["effective_from"]).dt.date
+    return out
+
+
+def current_owner_labels(contacts: pd.DataFrame) -> dict:
+    """3-digit extensions only -> '418 — Devin Klein' (latest assignment)."""
+    ext = contacts[contacts["from_value"].astype(str).str.fullmatch(r"\d{3}")]
+    latest = ext.sort_values("effective_from").groupby("from_value").tail(1)
+    labels = {}
+    for _, r in latest.sort_values("from_value").iterrows():
+        name = r["rep"] if isinstance(r["rep"], str) and r["rep"].strip() else "(unassigned)"
+        labels[r["from_value"]] = f'{r["from_value"]} — {name}'
+    return labels
+
+
+def _reset_editor():
+    st.session_state["editor_v"] = st.session_state.get("editor_v", 0) + 1
+
+
+@st.dialog("Assign New")
+def assign_new_dialog(contacts: pd.DataFrame):
+    labels = current_owner_labels(contacts)
+    ext = st.selectbox("Extension", list(labels), format_func=lambda k: labels[k])
+    name = st.text_input("Contact")
+    start_day = st.date_input("Starting", value=date.today(), format="MM/DD/YYYY")
+    st.caption(f"Calls from {ext} on or after {start_day:%m/%d/%Y} will show this contact. "
+               "Earlier calls keep their current name.")
+    if st.button("Save", type="primary"):
+        if not name.strip():
+            st.error("Enter a contact name.")
+            return
+        clash = contacts[(contacts["from_value"] == ext) & (contacts["effective_from"] == start_day)]
+        if not clash.empty:
+            st.error(f"{ext} already has an assignment starting {start_day:%m/%d/%Y}. "
+                     "Rename it in the table instead.")
+            return
+        sb.table("contacts").insert({"from_value": ext, "rep": name.strip(),
+                                     "effective_from": str(start_day)}).execute()
+        st.cache_data.clear()
+        _reset_editor()
+        st.rerun()
+
+
+@st.dialog("Rename contact")
+def rename_dialog(row_id: int, old: str, new: str):
+    st.write(f'Would you like to rename **"{old or "(unassigned)"}"** to **"{new or "(unassigned)"}"**?')
+    yes, no = st.columns(2)
+    if yes.button("Yes", type="primary", width="stretch"):
+        sb.table("contacts").update({"rep": new or None}).eq("id", row_id).execute()
+        st.cache_data.clear()
+        _reset_editor()
+        st.rerun()
+    if no.button("Cancel", width="stretch"):
+        _reset_editor()
+        st.rerun()
+
+
+@st.dialog("Remove assignments")
+def remove_dialog(rows: pd.DataFrame):
+    st.write("Remove these assignments? Their calls go back to the previous owner.")
+    st.dataframe(rows[["Ext / Phone / ID", "Name", "Starting"]], hide_index=True, width="stretch")
+    yes, no = st.columns(2)
+    if yes.button("Remove", type="primary", width="stretch"):
+        for row_id in rows["id"]:
+            sb.table("contacts").delete().eq("id", int(row_id)).execute()
+        st.cache_data.clear()
+        _reset_editor()
+        st.rerun()
+    if no.button("Cancel", width="stretch"):
+        _reset_editor()
+        st.rerun()
 
 
 # ---------- page picker ----------
@@ -101,33 +176,49 @@ st.sidebar.divider()
 
 if page == "Contacts":
     st.title("Contacts")
-    st.caption("Who each extension, phone number, or username in the call log's From column belongs to. "
-               "Edit a name, add a row at the bottom, or select rows and press Delete, then click Save.")
-    contacts = load_contacts().rename(columns={"from_value": "Ext / Phone / ID", "rep": "Name"})
+    st.caption("Who each extension, phone number, or username in the From column belongs to. "
+               "Edit a name and press Enter to rename it. Use Assign New when an extension changes hands.")
+    contacts = load_contacts()
+    if st.button("➕ Assign New", type="primary"):
+        assign_new_dialog(contacts)
+
+    shown = pd.DataFrame({
+        "id": contacts["id"],
+        "Ext / Phone / ID": contacts["from_value"],
+        "Name": contacts["rep"].fillna(""),
+        "Starting": contacts["effective_from"].map(
+            lambda d: "Beginning" if d == BASE_DATE else f"{d:%m/%d/%Y}"),
+        "Remove": False,
+    })
+    find = st.text_input("Find", placeholder="Type an extension or name")
+    if find.strip():
+        f = find.strip().lower()
+        shown = shown[shown["Ext / Phone / ID"].str.lower().str.contains(f, regex=False)
+                      | shown["Name"].str.lower().str.contains(f, regex=False)]
+
     edited = st.data_editor(
-        contacts, num_rows="dynamic", hide_index=True, width="stretch", height=650,
+        shown, hide_index=True, width="stretch", height=600, num_rows="fixed",
+        key=f"contacts_editor_{st.session_state.get('editor_v', 0)}",
+        column_order=["Ext / Phone / ID", "Name", "Starting", "Remove"],
+        disabled=["Ext / Phone / ID", "Starting"],
         column_config={
-            "Ext / Phone / ID": st.column_config.TextColumn(required=True),
-            "Name": st.column_config.TextColumn(help="Leave blank if unassigned"),
+            "Name": st.column_config.TextColumn(help="Edit and press Enter to rename"),
+            "Starting": st.column_config.TextColumn(help="Calls on or after this date use this name"),
+            "Remove": st.column_config.CheckboxColumn(width="small"),
         },
     )
-    unassigned = contacts["Name"].isna() | (contacts["Name"].astype(str).str.strip() == "")
-    st.caption(f"{len(contacts)} contacts · {int(unassigned.sum())} unassigned")
-    if st.button("Save changes", type="primary"):
-        new = edited.dropna(subset=["Ext / Phone / ID"]).copy()
-        new["Ext / Phone / ID"] = new["Ext / Phone / ID"].astype(str).str.strip()
-        new = new[new["Ext / Phone / ID"] != ""].drop_duplicates("Ext / Phone / ID", keep="last")
-        removed = set(contacts["Ext / Phone / ID"]) - set(new["Ext / Phone / ID"])
-        for key in removed:
-            sb.table("contacts").delete().eq("from_value", key).execute()
-        rows = [{"from_value": r["Ext / Phone / ID"],
-                 "rep": (str(r["Name"]).strip() or None) if pd.notna(r["Name"]) else None}
-                for _, r in new.iterrows()]
-        if rows:
-            sb.table("contacts").upsert(rows, on_conflict="from_value").execute()
-        st.cache_data.clear()
-        st.success("Saved.")
-        st.rerun()
+    unassigned = (shown["Name"].str.strip() == "").sum()
+    st.caption(f"{len(shown)} assignments · {unassigned} unassigned")
+
+    # A name was changed -> confirm
+    changed = edited[edited["Name"].str.strip() != shown["Name"].str.strip()]
+    if not changed.empty:
+        r = changed.iloc[0]
+        rename_dialog(int(r["id"]), shown.loc[r.name, "Name"].strip(), str(r["Name"]).strip())
+
+    to_remove = edited[edited["Remove"]]
+    if not to_remove.empty and st.button(f"Remove {len(to_remove)} selected"):
+        remove_dialog(to_remove)
     st.stop()
 
 
@@ -149,12 +240,19 @@ if df.empty:
     st.warning("No calls in this date range.")
     st.stop()
 
-# Swap From (extension / username) for the rep's name from the Contacts list
-contact_map = (load_contacts().dropna(subset=["rep"])
-               .assign(rep=lambda d: d["rep"].str.strip())
-               .query("rep != ''").set_index("from_value")["rep"].to_dict())
+# Swap From (extension / username) for the rep's name, using the assignment
+# that was in effect on the day of the call (see Contacts > Assign New)
+_c = load_contacts()
+_c = _c[_c["rep"].fillna("").str.strip() != ""].copy()
+_c["eff"] = pd.to_datetime(_c["effective_from"]).astype("datetime64[ns]")
+_c = _c.rename(columns={"from_value": "_key"})[["_key", "eff", "rep"]].sort_values("eff")
 df["Ext / ID"] = df["From"]
-df["From"] = df["From"].map(contact_map).fillna(df["From"])
+df["_key"] = df["From"].fillna("").astype(str)
+df["Date/Time"] = df["Date/Time"].astype("datetime64[ns]")
+df = df.sort_values("Date/Time")
+df = pd.merge_asof(df, _c, left_on="Date/Time", right_on="eff", by="_key", direction="backward")
+df["From"] = df["rep"].str.strip().fillna(df["Ext / ID"])
+df = df.drop(columns=["_key", "eff", "rep"])
 
 # Times Called = number of calls to that number inside the selected date range
 df["Times Called"] = df.groupby("To")["To"].transform("count")
