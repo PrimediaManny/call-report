@@ -31,15 +31,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 CALL_COLS = ["Direction", "To", "From", "Ext / ID", "Date/Time", "Duration", "Times Called"]
-LEAD_COLS = ["Lead Id", "Lead Started", "Lead Source", "Media Market", "Company In Ad",
-             "Contact Name (phase2)", "Lead Owner", "Status", "Phase2 Completed",
-             "Matched On", "Leads Matched"]
+LEAD_COLS = ["Lead Id", "Leads Matched", "Lead Choice", "Lead Started", "Last Edited", "Lead Source",
+             "Media Market", "Company In Ad", "Contact Name (phase2)", "Lead Owner", "Status",
+             "Phase2 Completed", "Matched On"]
 RENAME = {
     "direction": "Direction", "to_number": "To", "from_value": "From", "call_time": "Date/Time",
     "duration": "Duration", "lead_id": "Lead Id", "lead_started": "Lead Started",
     "lead_source": "Lead Source", "media_market": "Media Market", "company_in_ad": "Company In Ad",
     "contact_name": "Contact Name (phase2)", "lead_owner": "Lead Owner", "status": "Status",
     "phase2_completed": "Phase2 Completed", "matched_on": "Matched On", "leads_matched": "Leads Matched",
+    "last_edited": "Last Edited",
 }
 
 
@@ -86,7 +87,7 @@ except Exception:
 def load_calls(start: date, end: date) -> pd.DataFrame:
     rows, offset, page = [], 0, 1000
     while True:
-        res = sb.rpc("call_report", {"p_start": str(start), "p_end": str(end),
+        res = sb.rpc("call_report_v2", {"p_start": str(start), "p_end": str(end),
                                      "p_limit": page, "p_offset": offset}).execute()
         rows.extend(res.data)
         if len(res.data) < page:
@@ -98,6 +99,13 @@ def load_calls(start: date, end: date) -> pd.DataFrame:
     df = df.rename(columns=RENAME)
     df["Date/Time"] = pd.to_datetime(df["Date/Time"])
     df["Lead Id"] = df["Lead Id"].fillna("Not Found")
+    # Why this lead was chosen when a number matches several leads
+    df["Lead Choice"] = ""
+    multi = df["Leads Matched"] >= 2
+    df.loc[multi, "Lead Choice"] = "Most recent edit"
+    df.loc[multi & df["reps_lead"].astype(bool), "Lead Choice"] = "Rep's lead"
+    df.loc[multi & df["picked"].astype(bool), "Lead Choice"] = "Picked"
+    df = df.drop(columns=["picked", "reps_lead"])
     return df
 
 
@@ -106,9 +114,9 @@ BASE_DATE = date(1900, 1, 1)  # "from the beginning"
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_contacts() -> pd.DataFrame:
-    res = (sb.table("contacts").select("id, from_value, rep, effective_from")
+    res = (sb.table("contacts").select("id, from_value, rep, effective_from, mms_owner")
            .order("from_value").order("effective_from").execute())
-    out = pd.DataFrame(res.data, columns=["id", "from_value", "rep", "effective_from"])
+    out = pd.DataFrame(res.data, columns=["id", "from_value", "rep", "effective_from", "mms_owner"])
     out["effective_from"] = pd.to_datetime(out["effective_from"]).dt.date
     return out
 
@@ -133,6 +141,8 @@ def assign_new_dialog(contacts: pd.DataFrame):
     labels = current_owner_labels(contacts)
     ext = st.selectbox("Extension", list(labels), format_func=lambda k: labels[k])
     name = st.text_input("Contact")
+    owner = st.text_input("MMS Owner Name (optional)",
+                          help="Only needed if this person's name is spelled differently in MMS Lead Owner")
     start_day = st.date_input("Starting", value=date.today(), format="MM/DD/YYYY")
     st.caption(f"Calls from {ext} on or after {start_day:%m/%d/%Y} will show this contact. "
                "Earlier calls keep their current name.")
@@ -146,6 +156,7 @@ def assign_new_dialog(contacts: pd.DataFrame):
                      "Rename it in the table instead.")
             return
         sb.table("contacts").insert({"from_value": ext, "rep": name.strip(),
+                                     "mms_owner": owner.strip() or None,
                                      "effective_from": str(start_day)}).execute()
         st.cache_data.clear()
         _reset_editor()
@@ -153,11 +164,15 @@ def assign_new_dialog(contacts: pd.DataFrame):
 
 
 @st.dialog("Rename contact")
-def rename_dialog(row_id: int, old: str, new: str):
-    st.write(f'Would you like to rename **"{old or "(unassigned)"}"** to **"{new or "(unassigned)"}"**?')
+def rename_dialog(row_id: int, old: str, new: str, field: str = "rep"):
+    if field == "rep":
+        st.write(f'Would you like to rename **"{old or "(unassigned)"}"** to **"{new or "(unassigned)"}"**?')
+    else:
+        st.write(f'Would you like to change the MMS Owner Name from **"{old or "(blank)"}"** '
+                 f'to **"{new or "(blank)"}"**?')
     yes, no = st.columns(2)
     if yes.button("Yes", type="primary", width="stretch"):
-        sb.table("contacts").update({"rep": new or None}).eq("id", row_id).execute()
+        sb.table("contacts").update({field: new or None}).eq("id", row_id).execute()
         st.cache_data.clear()
         _reset_editor()
         st.rerun()
@@ -189,7 +204,8 @@ st.sidebar.divider()
 if page == "Contacts":
     st.title("Contacts")
     st.caption("Who each extension, phone number, or username in the From column belongs to. "
-               "Edit a name and press Enter to rename it. Use Assign New when an extension changes hands.")
+               "Edit a name and press Enter to rename it. Use Assign New when an extension changes hands. "
+               "MMS Owner Name is only needed when the person's name is spelled differently in MMS.")
     contacts = load_contacts()
     if st.button("➕ Assign New", type="primary"):
         assign_new_dialog(contacts)
@@ -198,6 +214,7 @@ if page == "Contacts":
         "id": contacts["id"],
         "Ext / Phone / ID": contacts["from_value"],
         "Name": contacts["rep"].fillna(""),
+        "MMS Owner Name": contacts["mms_owner"].fillna(""),
         "Starting": contacts["effective_from"].map(
             lambda d: "Beginning" if d == BASE_DATE else f"{d:%m/%d/%Y}"),
         "Remove": False,
@@ -211,10 +228,13 @@ if page == "Contacts":
     edited = st.data_editor(
         shown, hide_index=True, width="stretch", height=600, num_rows="fixed",
         key=f"contacts_editor_{st.session_state.get('editor_v', 0)}",
-        column_order=["Ext / Phone / ID", "Name", "Starting", "Remove"],
+        column_order=["Ext / Phone / ID", "Name", "MMS Owner Name", "Starting", "Remove"],
         disabled=["Ext / Phone / ID", "Starting"],
         column_config={
             "Name": st.column_config.TextColumn(help="Edit and press Enter to rename"),
+            "MMS Owner Name": st.column_config.TextColumn(
+                help="How this person's name appears in MMS Lead Owner, if different "
+                     "(e.g. Becky Kirchwehm -> Rebecca Kirchwehm). Used to find the rep's own lead."),
             "Starting": st.column_config.TextColumn(help="Calls on or after this date use this name"),
             "Remove": st.column_config.CheckboxColumn(width="small"),
         },
@@ -224,9 +244,15 @@ if page == "Contacts":
 
     # A name was changed -> confirm
     changed = edited[edited["Name"].str.strip() != shown["Name"].str.strip()]
+    changed_owner = edited[edited["MMS Owner Name"].fillna("").str.strip()
+                           != shown["MMS Owner Name"].fillna("").str.strip()]
     if not changed.empty:
         r = changed.iloc[0]
         rename_dialog(int(r["id"]), shown.loc[r.name, "Name"].strip(), str(r["Name"]).strip())
+    elif not changed_owner.empty:
+        r = changed_owner.iloc[0]
+        rename_dialog(int(r["id"]), shown.loc[r.name, "MMS Owner Name"].strip(),
+                      str(r["MMS Owner Name"] or "").strip(), field="mms_owner")
 
     to_remove = edited[edited["Remove"]]
     if not to_remove.empty and st.button(f"Remove {len(to_remove)} selected"):
@@ -340,13 +366,17 @@ if len(table) <= STYLE_LIMIT:
     shown = (table.style
              .set_properties(subset=LEAD_COLS, **{"background-color": "rgba(255, 230, 0, 0.12)"})
              .map(lambda v: "background-color: rgba(255, 99, 132, 0.25)" if v >= 3 else "",
-                  subset=["Times Called"]))
+                  subset=["Times Called"])
+             .map(lambda v: "background-color: rgba(255, 140, 0, 0.35); font-weight: 600" if v >= 2 else "",
+                  subset=["Leads Matched"]))
 else:
     shown = table
 
-st.markdown("**Call log** (left)  →  **MMS lead** (right, shaded)")
+st.markdown("**Call log** (left)  →  **MMS lead** (right, shaded)  ·  "
+            "Click a row with **Leads Matched** of 2 or more (orange) to pick which lead it belongs to.")
 event = st.dataframe(
     shown,
+    key=f"calls_table_{st.session_state.get('table_v', 0)}",
     width="stretch",
     hide_index=True,
     height=600,
@@ -356,15 +386,67 @@ event = st.dataframe(
         "Date/Time": st.column_config.DatetimeColumn(format="M/D/YY h:mm A"),
         "Times Called": st.column_config.NumberColumn(width="small"),
         "Leads Matched": st.column_config.NumberColumn(width="small",
-                                                       help="How many MMS leads contain this number"),
+                                                       help="How many MMS leads contain this number. "
+                                                            "Click the row to pick one."),
+        "Lead Choice": st.column_config.TextColumn(
+            help="Picked = chosen by hand · Rep's lead = owned by the rep who called · "
+                 "Most recent edit = most recently edited matching lead"),
     },
 )
 
 st.download_button("Download as CSV", table.to_csv(index=False).encode("utf-8"),
                    file_name=f"call_report_{start}_{end}.csv", mime="text/csv")
 
+# ---------- pick a lead for numbers with several matches ----------
+def _reset_table():
+    st.session_state["table_v"] = st.session_state.get("table_v", 0) + 1
+
+
+@st.dialog("Pick a lead", width="large")
+def pick_lead_dialog(number: str, current_lead: str, choice: str):
+    leads = pd.DataFrame(sb.rpc("leads_for_number", {"p_phone": number}).execute().data)
+    if leads.empty:
+        st.info("No matching leads found.")
+        return
+    leads = leads.rename(columns={
+        "lead_id": "Lead Id", "created": "Created", "last_edited": "Last Edited", "lead_source": "Source",
+        "media_market": "Market", "company_in_ad": "Company", "contact_name": "Contact",
+        "contact_phone": "Contact Phone", "contact_email": "Contact Email", "lead_owner": "Lead Owner",
+        "status": "Status", "phase2_completed": "Phase2 Completed", "matched_on": "Matched On"})
+    leads.insert(0, "Showing", leads["Lead Id"].eq(current_lead).map({True: "◀ now", False: ""}))
+    st.write(f"**{number}** matches **{len(leads)} leads**. Currently showing **{current_lead}** "
+             f"({choice.lower() or 'only match'}). Click a lead, then **Use this lead**. "
+             "The choice applies to every call to this number.")
+    picked = st.dataframe(leads, hide_index=True, width="stretch", on_select="rerun",
+                          selection_mode="single-row", key=f"pick_{number}")
+    rows = picked.selection.rows if picked and picked.selection else []
+    c1, c2, c3 = st.columns(3)
+    if rows:
+        lead = leads.iloc[rows[0]]["Lead Id"]
+        if c1.button(f"Use lead {lead}", type="primary", width="stretch"):
+            sb.table("lead_picks").upsert({"phone10": str(number)[-10:], "lead_id": str(lead),
+                                           "picked_at": pd.Timestamp.utcnow().isoformat()},
+                                          on_conflict="phone10").execute()
+            st.cache_data.clear()
+            _reset_table()
+            st.rerun()
+    else:
+        c1.button("Use this lead", disabled=True, width="stretch")
+    if choice == "Picked" and c2.button("Undo pick (go back to automatic)", width="stretch"):
+        sb.table("lead_picks").delete().eq("phone10", str(number)[-10:]).execute()
+        st.cache_data.clear()
+        _reset_table()
+        st.rerun()
+    if c3.button("Close", width="stretch"):
+        _reset_table()
+        st.rerun()
+
+
 # ---------- detail for a selected row ----------
 sel = event.selection.rows if event and event.selection else []
+if sel and table.iloc[sel[0]]["Leads Matched"] >= 2:
+    r = table.iloc[sel[0]]
+    pick_lead_dialog(str(r["To"]), str(r["Lead Id"]), str(r["Lead Choice"]))
 if sel:
     number = table.iloc[sel[0]]["To"]
     st.subheader(f"All calls to {number} in this date range")
