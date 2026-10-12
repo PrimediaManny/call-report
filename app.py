@@ -413,7 +413,8 @@ def pick_lead_dialog(number: str, current_lead: str, choice: str):
         "media_market": "Market", "company_in_ad": "Company", "contact_name": "Contact",
         "contact_phone": "Contact Phone", "contact_email": "Contact Email", "lead_owner": "Lead Owner",
         "status": "Status", "phase2_completed": "Phase2 Completed", "matched_on": "Matched On"})
-    leads.insert(0, "Showing", leads["Lead Id"].eq(current_lead).map({True: "◀ now", False: ""}))
+    leads = leads.rename(columns={"Company": "Company In Ad"})
+    leads = leads[["Lead Id", "Market", "Company In Ad", "Lead Owner", "Status", "Matched On"]]
     st.write(f"**{number}** matches **{len(leads)} leads**. Currently showing **{current_lead}** "
              f"({choice.lower() or 'only match'}). Click a lead, then **Use this lead**. "
              "The choice applies to every call to this number.")
