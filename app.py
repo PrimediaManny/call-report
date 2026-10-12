@@ -246,7 +246,7 @@ start, end = picked
 df = load_calls(start, end)
 
 st.title("Call Report")
-st.caption(f"{start:%m/%d/%Y} to {end:%m/%d/%Y}  ·  Times Called counts calls to that number within this date range")
+header_slot = st.empty()  # filled in once the From filter is known
 
 if df.empty:
     st.warning("No calls in this date range.")
@@ -271,6 +271,12 @@ df["Times Called"] = df.groupby("To")["To"].transform("count")
 
 directions = st.sidebar.multiselect("Direction", sorted(df["Direction"].dropna().unique()))
 froms = st.sidebar.multiselect("From", sorted(df["From"].dropna().astype(str).unique()))
+
+# Header label: who is being viewed + date range, e.g. "Amanda Watson · 10/05/2026 to 10/12/2026"
+who = ", ".join(froms) if froms else "All reps"
+with header_slot.container():
+    st.markdown(f"#### {who}  ·  {start:%m/%d/%Y} to {end:%m/%d/%Y}")
+    st.caption("Times Called counts calls to that number within this date range")
 found = st.sidebar.radio("Lead match", ["All", "Found", "Not Found"], horizontal=True)
 min_times = st.sidebar.number_input("Times Called at least", min_value=1, value=1, step=1)
 search = st.sidebar.text_input("Search (number, company, contact, lead id)")
