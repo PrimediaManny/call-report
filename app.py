@@ -16,7 +16,19 @@ import pandas as pd
 import streamlit as st
 from supabase import create_client
 
-st.set_page_config(page_title="Call Report", layout="wide")
+st.set_page_config(page_title="Call Report", layout="wide", initial_sidebar_state="expanded")
+
+# Keep the sidebar hide/show arrow visible at all times (Streamlit normally shows it only on hover)
+st.markdown("""
+<style>
+[data-testid="stSidebarCollapseButton"] { display: flex !important; visibility: visible !important; opacity: 1 !important; }
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="stExpandSidebarButton"],
+[data-testid="stSidebarCollapsedControl"] button {
+    border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 CALL_COLS = ["Direction", "To", "From", "Ext / ID", "Date/Time", "Duration", "Times Called"]
 LEAD_COLS = ["Lead Id", "Lead Started", "Lead Source", "Media Market", "Company In Ad",
@@ -291,12 +303,16 @@ if st.sidebar.button("Reload calls"):
 
 # ---------- summary ----------
 matched = (view["Lead Id"] != "Not Found").sum()
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Calls", f"{len(view):,}")
-k2.metric("Unique numbers", f"{view['To'].nunique():,}")
-k3.metric("Calls matched to a lead", f"{matched:,}",
+is_out = view["Direction"].fillna("").str.lower().eq("outbound")
+is_in = view["Direction"].fillna("").str.lower().eq("inbound")
+k1, k2, k3, k4, k5, k6 = st.columns(6)
+k1.metric("Total Calls", f"{len(view):,}")
+k2.metric("Outbound", f"{int(is_out.sum()):,}")
+k3.metric("Inbound", f"{int(is_in.sum()):,}")
+k4.metric("Unique numbers", f"{view['To'].nunique():,}")
+k5.metric("Calls matched to a lead", f"{matched:,}",
           f"{matched / len(view):.0%}" if len(view) else None, delta_color="off")
-k4.metric("Not Found", f"{len(view) - matched:,}")
+k6.metric("Not Found", f"{len(view) - matched:,}")
 
 # ---------- table: calls on the left, MMS lead on the right ----------
 # Default sort (same as the Excel report):
