@@ -18,7 +18,7 @@ from supabase import create_client
 
 st.set_page_config(page_title="Call Report", layout="wide")
 
-CALL_COLS = ["Direction", "To", "From", "Date/Time", "Duration", "Times Called"]
+CALL_COLS = ["Direction", "To", "From", "Ext / ID", "Date/Time", "Duration", "Times Called"]
 LEAD_COLS = ["Lead Id", "Lead Started", "Lead Source", "Media Market", "Company In Ad",
              "Contact Name (phase2)", "Lead Owner", "Status", "Phase2 Completed",
              "Matched On", "Leads Matched"]
@@ -89,6 +89,48 @@ def load_calls(start: date, end: date) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def load_contacts() -> pd.DataFrame:
+    res = sb.table("contacts").select("from_value, rep").order("from_value").execute()
+    return pd.DataFrame(res.data, columns=["from_value", "rep"])
+
+
+# ---------- page picker ----------
+page = st.sidebar.radio("Page", ["Call Report", "Contacts"], label_visibility="collapsed")
+st.sidebar.divider()
+
+if page == "Contacts":
+    st.title("Contacts")
+    st.caption("Who each extension, phone number, or username in the call log's From column belongs to. "
+               "Edit a name, add a row at the bottom, or select rows and press Delete, then click Save.")
+    contacts = load_contacts().rename(columns={"from_value": "Ext / Phone / ID", "rep": "Name"})
+    edited = st.data_editor(
+        contacts, num_rows="dynamic", hide_index=True, width="stretch", height=650,
+        column_config={
+            "Ext / Phone / ID": st.column_config.TextColumn(required=True),
+            "Name": st.column_config.TextColumn(help="Leave blank if unassigned"),
+        },
+    )
+    unassigned = contacts["Name"].isna() | (contacts["Name"].astype(str).str.strip() == "")
+    st.caption(f"{len(contacts)} contacts · {int(unassigned.sum())} unassigned")
+    if st.button("Save changes", type="primary"):
+        new = edited.dropna(subset=["Ext / Phone / ID"]).copy()
+        new["Ext / Phone / ID"] = new["Ext / Phone / ID"].astype(str).str.strip()
+        new = new[new["Ext / Phone / ID"] != ""].drop_duplicates("Ext / Phone / ID", keep="last")
+        removed = set(contacts["Ext / Phone / ID"]) - set(new["Ext / Phone / ID"])
+        for key in removed:
+            sb.table("contacts").delete().eq("from_value", key).execute()
+        rows = [{"from_value": r["Ext / Phone / ID"],
+                 "rep": (str(r["Name"]).strip() or None) if pd.notna(r["Name"]) else None}
+                for _, r in new.iterrows()]
+        if rows:
+            sb.table("contacts").upsert(rows, on_conflict="from_value").execute()
+        st.cache_data.clear()
+        st.success("Saved.")
+        st.rerun()
+    st.stop()
+
+
 # ---------- sidebar ----------
 st.sidebar.header("Filters")
 today = date.today()
@@ -106,6 +148,13 @@ st.caption(f"{start:%m/%d/%Y} to {end:%m/%d/%Y}  ·  Times Called counts calls t
 if df.empty:
     st.warning("No calls in this date range.")
     st.stop()
+
+# Swap From (extension / username) for the rep's name from the Contacts list
+contact_map = (load_contacts().dropna(subset=["rep"])
+               .assign(rep=lambda d: d["rep"].str.strip())
+               .query("rep != ''").set_index("from_value")["rep"].to_dict())
+df["Ext / ID"] = df["From"]
+df["From"] = df["From"].map(contact_map).fillna(df["From"])
 
 # Times Called = number of calls to that number inside the selected date range
 df["Times Called"] = df.groupby("To")["To"].transform("count")
@@ -128,7 +177,7 @@ elif found == "Not Found":
 view = view[view["Times Called"] >= min_times]
 if search.strip():
     s = search.strip().lower()
-    hay = view[["To", "Company In Ad", "Contact Name (phase2)", "Lead Id"]].astype(str).apply(
+    hay = view[["To", "From", "Ext / ID", "Company In Ad", "Contact Name (phase2)", "Lead Id"]].astype(str).apply(
         lambda c: c.str.lower()).agg(" ".join, axis=1)
     view = view[hay.str.contains(s, regex=False)]
 
