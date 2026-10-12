@@ -9,6 +9,7 @@ in these MMS columns only:
   Contact Phone (phase3), Phase2 Comments
 The matching itself runs inside Supabase (function: call_report).
 """
+import hmac
 from datetime import date, timedelta
 
 import pandas as pd
@@ -28,6 +29,28 @@ RENAME = {
     "contact_name": "Contact Name (phase2)", "lead_owner": "Lead Owner", "status": "Status",
     "phase2_completed": "Phase2 Completed", "matched_on": "Matched On", "leads_matched": "Leads Matched",
 }
+
+
+# ---------- password gate (only active when APP_PASSWORD is set in secrets) ----------
+def password_ok() -> bool:
+    try:
+        required = st.secrets.get("APP_PASSWORD")
+    except Exception:
+        required = None
+    if not required or st.session_state.get("authed"):
+        return True
+    st.title("Call Report")
+    pw = st.text_input("Password", type="password")
+    if pw:
+        if hmac.compare_digest(pw, str(required)):
+            st.session_state["authed"] = True
+            st.rerun()
+        st.error("Incorrect password")
+    return False
+
+
+if not password_ok():
+    st.stop()
 
 
 # ---------- connection ----------
