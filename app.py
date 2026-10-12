@@ -152,6 +152,18 @@ k3.metric("Calls matched to a lead", f"{matched:,}",
 k4.metric("Not Found", f"{len(view) - matched:,}")
 
 # ---------- table: calls on the left, MMS lead on the right ----------
+# Default sort (same as the Excel report):
+# From A-Z, Media Market A-Z, Lead Source A-Z, Lead Id smallest-largest, Date/Time oldest-newest
+def _sort_key(col: pd.Series) -> pd.Series:
+    if col.name == "Lead Id":
+        return pd.to_numeric(col, errors="coerce")  # "Not Found" goes to the bottom of each group
+    if col.name == "Date/Time":
+        return col
+    return col.astype("string").str.lower()  # A-Z ignoring upper/lower case, blanks last
+
+
+SORT_COLS = ["From", "Media Market", "Lead Source", "Lead Id", "Date/Time"]
+view = view.sort_values(SORT_COLS, key=_sort_key, na_position="last", kind="stable")
 table = view[CALL_COLS + LEAD_COLS].reset_index(drop=True)
 
 STYLE_LIMIT = 10000  # colouring very large tables makes the page slow
