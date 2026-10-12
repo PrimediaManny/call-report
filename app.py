@@ -275,7 +275,7 @@ elif found == "Not Found":
 view = view[view["Times Called"] >= min_times]
 if search.strip():
     s = search.strip().lower()
-    hay = view[["To", "From", "Ext / ID", "Company In Ad", "Contact Name (phase2)", "Lead Id"]].astype(str).apply(
+    hay = view[["To", "From", "Ext / ID", "Company In Ad", "Contact Name (phase2)", "Lead Id"]].fillna("").astype(str).apply(
         lambda c: c.str.lower()).agg(" ".join, axis=1)
     view = view[hay.str.contains(s, regex=False)]
 
