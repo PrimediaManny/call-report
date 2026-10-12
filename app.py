@@ -63,10 +63,8 @@ try:
     sb = get_client()
 except Exception:
     st.error(
-        "Supabase connection details are missing.\n\n"
-        "Create the file C:\\Users\\mannyv\\.streamlit\\secrets.toml with:\n\n"
-        'SUPABASE_URL = "https://pnpvouuckkapoxoqvmet.supabase.co"\n'
-        'SUPABASE_SECRET_KEY = "sb_secret_..."'
+        "Supabase connection details are missing. Add SUPABASE_URL and "
+        "SUPABASE_SECRET_KEY to this app's secrets."
     )
     st.stop()
 
