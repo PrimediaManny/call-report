@@ -83,12 +83,19 @@ except Exception:
 
 
 # ---------- data ----------
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_lead_sources() -> list:
+    return [r["lead_source"] for r in sb.rpc("lead_source_list", {}).execute().data]
+
+
 @st.cache_data(ttl=600, show_spinner="Loading calls...")
-def load_calls(start: date, end: date) -> pd.DataFrame:
+def load_calls(start: date, end: date, sources: tuple = ()) -> pd.DataFrame:
+    """sources: only match calls to MMS leads with these Lead Source values (empty = all leads)."""
     rows, offset, page = [], 0, 1000
     while True:
-        res = sb.rpc("call_report_v2", {"p_start": str(start), "p_end": str(end),
-                                     "p_limit": page, "p_offset": offset}).execute()
+        res = sb.rpc("call_report_v3", {"p_start": str(start), "p_end": str(end),
+                                        "p_limit": page, "p_offset": offset,
+                                        "p_sources": list(sources) if sources else None}).execute()
         rows.extend(res.data)
         if len(res.data) < page:
             break
@@ -366,14 +373,18 @@ if not isinstance(picked, (list, tuple)) or len(picked) != 2:
     st.info("Pick an end date to finish the date range.")
     st.stop()
 start, end = picked
+sources = st.sidebar.multiselect(
+    "Lead Source", load_lead_sources(), key="f_sources",
+    help="Only match calls to MMS leads with these Lead Sources. Calls without a lead from these "
+         "sources are hidden. Leave empty to use all leads.")
 
-df = load_calls(start, end)
+df = load_calls(start, end, tuple(sorted(sources)))
 
 st.title("Call Report")
 header_slot = st.empty()  # filled in once the From filter is known
 
 if df.empty:
-    st.warning("No calls in this date range.")
+    st.warning("No calls in this date range" + (f" match a lead from {', '.join(sources)}." if sources else "."))
     st.stop()
 
 # Swap From (extension / username) for the rep's name, using the assignment
@@ -399,7 +410,8 @@ froms = st.sidebar.multiselect("From", sorted(df["From"].dropna().astype(str).un
 # Header label: who is being viewed + date range, e.g. "Amanda Watson · 10/05/2026 to 10/12/2026"
 who = ", ".join(froms) if froms else "All reps"
 with header_slot.container():
-    st.markdown(f"#### {who}  ·  {start:%m/%d/%Y} to {end:%m/%d/%Y}")
+    src = f"  ·  {', '.join(sources)}" if sources else ""
+    st.markdown(f"#### {who}{src}  ·  {start:%m/%d/%Y} to {end:%m/%d/%Y}")
     st.caption("Times Called counts calls to that number within this date range")
 found = st.sidebar.radio("Lead match", ["All", "Found", "Not Found"], horizontal=True, key="f_match")
 min_times = st.sidebar.number_input("Times Called at least", min_value=1, value=1, step=1, key="f_min_times")
