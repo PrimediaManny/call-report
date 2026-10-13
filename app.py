@@ -89,13 +89,15 @@ def load_lead_sources() -> list:
 
 
 @st.cache_data(ttl=600, show_spinner="Loading calls...")
-def load_calls(start: date, end: date, sources: tuple = ()) -> pd.DataFrame:
-    """sources: only match calls to MMS leads with these Lead Source values (empty = all leads)."""
+def load_calls(start: date, end: date, sources: tuple = (), started_from=None) -> pd.DataFrame:
+    """sources / started_from: only match calls to MMS leads with these Lead Sources and/or
+    a Lead Started date on or after started_from (both empty = all leads)."""
     rows, offset, page = [], 0, 1000
     while True:
-        res = sb.rpc("call_report_v3", {"p_start": str(start), "p_end": str(end),
+        res = sb.rpc("call_report_v4", {"p_start": str(start), "p_end": str(end),
                                         "p_limit": page, "p_offset": offset,
-                                        "p_sources": list(sources) if sources else None}).execute()
+                                        "p_sources": list(sources) if sources else None,
+                                        "p_started_from": str(started_from) if started_from else None}).execute()
         rows.extend(res.data)
         if len(res.data) < page:
             break
@@ -205,8 +207,109 @@ def remove_dialog(rows: pd.DataFrame):
 
 
 # ---------- page picker ----------
-page = st.sidebar.radio("Page", ["Call Report", "Contacts", "Upload Calls"], label_visibility="collapsed")
+page = st.sidebar.radio("Page", ["Call Report", "Contacts", "Upload Calls", "Upload Leads"], label_visibility="collapsed")
 st.sidebar.divider()
+
+if page == "Upload Leads":
+    MMS_COLS = [
+        "Lead Id", "Old Lead Id", "Lead Started", "Last Edited", "Lead Source", "Vertical", "Name of Media",
+        "Media Market", "Media Format", "Company In Ad", "Lead Rating", "Phone Number In Ad",
+        "Contact Name (phase2)", "Contact Phone (phase2)", "Contact Email (phase2)", "Company (phase2)",
+        "Company Phone (phase2)", "Address (phase2)", "Suite (phase2)", "City (phase2)", "State (phase2)",
+        "Zip (phase2)", "Company (phase3)", "State (phase3)", "Company Phone (phase3)",
+        "Company Website (phase3)", "Contact 1 (phase3)", "Contact 1 Title (phase3)", "Contact 2 (phase3)",
+        "Contact 2 Title (phase3)", "Contact Phone (phase3)", "Contact Email (phase3)", "Started By",
+        "Lead Owner", "Status", "Phase1 Completed", "Mmr Completed", "Phase2 Completed", "Phase3 Completed",
+        "Ddr Completed", "Phase2 Comments",
+    ]
+    st.title("Upload Leads")
+    st.caption("Update MMS from a lead export (CSV). Rows are matched on Lead Id only: a Lead Id already in "
+               "MMS is overwritten with the file's version, a new Lead Id is added. Only the columns in the "
+               "file are updated, and blank cells in those columns overwrite with blank. Phone matching for "
+               "the call log is refreshed automatically afterwards.")
+    up = st.file_uploader("Lead export CSV", type=["csv"], key="leads_file")
+    if up is None:
+        st.stop()
+
+    raw = pd.read_csv(up, dtype=str, keep_default_na=False, low_memory=False)
+    raw.columns = [str(c).strip() for c in raw.columns]
+    if "Lead Id" not in raw.columns:
+        st.error("This file has no **Lead Id** column, so it can't be matched to MMS. "
+                 f"Columns found: {', '.join(raw.columns)}")
+        st.stop()
+    use_cols = [c for c in raw.columns if c in MMS_COLS]
+    ignored = [c for c in raw.columns if c not in MMS_COLS]
+
+    f = raw[use_cols].copy()
+    for c in use_cols:
+        f[c] = f[c].astype(str).str.strip()
+    # Lead Id as a whole number in text form, e.g. "235486" (not "235486.0")
+    f["Lead Id"] = f["Lead Id"].str.replace(r"\.0+$", "", regex=True)
+    bad = ~f["Lead Id"].str.fullmatch(r"\d+")
+    dupes = int(f[~bad].duplicated("Lead Id", keep="last").sum())
+    good = f[~bad].drop_duplicates("Lead Id", keep="last")
+
+    if ignored:
+        st.info(f"These columns aren't in MMS and will be ignored: {', '.join(ignored)}")
+    if bad.any():
+        with st.expander(f"⚠️ {int(bad.sum())} row{'s' if int(bad.sum()) != 1 else ''} without a valid "
+                         "Lead Id will be skipped"):
+            st.dataframe(raw[bad.values], hide_index=True, width="stretch")
+    if good.empty:
+        st.error("No rows with a valid Lead Id in this file.")
+        st.stop()
+
+    ids = good["Lead Id"].tolist()
+    file_key = f"{up.name}-{up.size}-{len(ids)}"
+    if st.session_state.get("leads_key") != file_key:
+        with st.spinner("Checking which leads are already in MMS..."):
+            existing = 0
+            for i in range(0, len(ids), 5000):
+                existing += sb.rpc("count_existing_leads", {"p_ids": ids[i:i + 5000]}).execute().data
+        st.session_state["leads_key"] = file_key
+        st.session_state["leads_existing"] = existing
+    existing = st.session_state["leads_existing"]
+    new = len(ids) - existing
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Leads in file", f"{len(ids):,}")
+    c2.metric("Will overwrite", f"{existing:,}")
+    c3.metric("New leads to add", f"{new:,}")
+    c4.metric("Skipped", f"{int(bad.sum()) + dupes:,}",
+              help="Rows without a valid Lead Id, plus repeated Lead Ids (the last copy in the file is used)")
+    st.caption(f"Columns that will be updated ({len(use_cols)}): {', '.join(use_cols)}")
+    with st.expander("Preview the file (first 50 rows)"):
+        st.dataframe(good.head(50), hide_index=True, width="stretch")
+
+    @st.dialog("Confirm lead upload")
+    def confirm_leads(n_over: int, n_new: int):
+        st.write(f"Overwrite **{n_over:,}** existing lead{'s' if n_over != 1 else ''} and add "
+                 f"**{n_new:,}** new lead{'s' if n_new != 1 else ''} in MMS?")
+        yes, no = st.columns(2)
+        if yes.button("Yes, upload", type="primary", width="stretch"):
+            rows = good.replace({"": None}).to_dict(orient="records")
+            bar = st.progress(0.0, text="Uploading leads...")
+            for i in range(0, len(rows), 500):
+                sb.table("mms").upsert(rows[i:i + 500], on_conflict="Lead Id").execute()
+                bar.progress(min(1.0, (i + 500) / len(rows)), text="Uploading leads...")
+            bar.progress(1.0, text="Updating phone matching for these leads...")
+            for i in range(0, len(ids), 1000):
+                sb.rpc("refresh_lead_phones", {"p_ids": ids[i:i + 1000]}).execute()
+            st.cache_data.clear()
+            st.session_state["leads_key"] = None
+            st.session_state["leads_done"] = (n_over, n_new)
+            st.rerun()
+        if no.button("Cancel", width="stretch"):
+            st.rerun()
+
+    if st.session_state.get("leads_done") is not None:
+        n_over, n_new = st.session_state.pop("leads_done")
+        st.success(f"Done: {n_over:,} lead{'s' if n_over != 1 else ''} overwritten and {n_new:,} added. "
+                   "The call log now uses the updated leads.")
+    elif st.button(f"Confirm: upload {len(ids):,} lead{'s' if len(ids) != 1 else ''}", type="primary"):
+        confirm_leads(existing, new)
+    st.stop()
+
 
 if page == "Upload Calls":
     st.title("Upload Calls")
@@ -377,14 +480,20 @@ sources = st.sidebar.multiselect(
     "Lead Source", load_lead_sources(), key="f_sources",
     help="Only match calls to MMS leads with these Lead Sources. Calls without a lead from these "
          "sources are hidden. Leave empty to use all leads.")
+started_from = st.sidebar.date_input(
+    "Lead Started from", value=None, key="f_started_from", format="MM/DD/YYYY",
+    help="Only match calls to MMS leads started on or after this date. Leave empty for any date.")
 
-df = load_calls(start, end, tuple(sorted(sources)))
+df = load_calls(start, end, tuple(sorted(sources)), started_from)
 
 st.title("Call Report")
 header_slot = st.empty()  # filled in once the From filter is known
 
 if df.empty:
-    st.warning("No calls in this date range" + (f" match a lead from {', '.join(sources)}." if sources else "."))
+    lead_filter = " and ".join(x for x in [
+        f"from {', '.join(sources)}" if sources else "",
+        f"started on or after {started_from:%m/%d/%Y}" if started_from else ""] if x)
+    st.warning("No calls in this date range" + (f" match a lead {lead_filter}." if lead_filter else "."))
     st.stop()
 
 # Swap From (extension / username) for the rep's name, using the assignment
@@ -411,6 +520,8 @@ froms = st.sidebar.multiselect("From", sorted(df["From"].dropna().astype(str).un
 who = ", ".join(froms) if froms else "All reps"
 with header_slot.container():
     src = f"  ·  {', '.join(sources)}" if sources else ""
+    if started_from:
+        src += f"  ·  Leads started from {started_from:%m/%d/%Y}"
     st.markdown(f"#### {who}{src}  ·  {start:%m/%d/%Y} to {end:%m/%d/%Y}")
     st.caption("Times Called counts calls to that number within this date range")
 found = st.sidebar.radio("Lead match", ["All", "Found", "Not Found"], horizontal=True, key="f_match")
