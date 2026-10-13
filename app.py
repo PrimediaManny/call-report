@@ -257,7 +257,8 @@ def pick_lead_dialog(number: str, current_lead: str, choice: str):
 
 def _filter_defaults() -> dict:
     today = date.today()
-    return {"f_dates": (today - timedelta(days=7), today), "f_sources": [], "f_started_from": None,
+    yesterday = today - timedelta(days=1)
+    return {"f_dates": (yesterday, yesterday), "f_sources": [], "f_started_from": None,
             "f_direction": "All", "f_from": [], "f_match": "All", "f_min_times": 1, "f_search": ""}
 
 
@@ -424,18 +425,6 @@ def page_call_report():
     else:
         shown = table
 
-    st.caption("**Call log** (left) → **MMS lead** (right, shaded). Click a row with **Leads Matched** "
-               "shaded orange to pick which lead it belongs to.")
-    event = st.dataframe(
-        shown, key="calls_table", width="stretch", hide_index=True, height=600,
-        on_select="rerun", selection_mode="single-row",
-        column_config={
-            "Date/Time": DT_FMT,
-            "Times Called": st.column_config.NumberColumn(width="small"),
-            "Leads Matched": st.column_config.NumberColumn(
-                width="small", help="How many MMS leads contain this number. Click the row to pick one."),
-        },
-    )
     def _us_time(t):  # 9/30/26 2:58 PM, same as the table (works on Windows too)
         if pd.isna(t):
             return ""
@@ -453,6 +442,18 @@ def page_call_report():
                        icon=":material/download:", width="stretch")
     if not xlsx:
         st.caption("To enable the Excel download on this computer, run `pip install openpyxl` once.")
+    st.caption("**Call log** (left) → **MMS lead** (right, shaded). Click a row with **Leads Matched** "
+               "shaded orange to pick which lead it belongs to.")
+    event = st.dataframe(
+        shown, key="calls_table", width="stretch", hide_index=True, height=600,
+        on_select="rerun", selection_mode="single-row",
+        column_config={
+            "Date/Time": DT_FMT,
+            "Times Called": st.column_config.NumberColumn(width="small"),
+            "Leads Matched": st.column_config.NumberColumn(
+                width="small", help="How many MMS leads contain this number. Click the row to pick one."),
+        },
+    )
 
     # ---------- selected row: pick a lead / all calls to that number ----------
     sel = event.selection.rows if event and event.selection else []
