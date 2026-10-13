@@ -12,6 +12,7 @@ Contact Email (phase2), Company (phase2), Company Phone (phase2), Company (phase
 Contact Phone (phase3), Phase2 Comments. The matching runs inside Supabase (call_report_v4).
 """
 import hmac
+import io
 from datetime import date, timedelta
 
 import pandas as pd
@@ -173,6 +174,31 @@ def apply_rep_names(df: pd.DataFrame) -> pd.DataFrame:
     df = pd.merge_asof(df, c, left_on="Date/Time", right_on="eff", by="_key", direction="backward")
     df["From"] = df["rep"].str.strip().fillna(df["Ext / ID"])
     return df.drop(columns=["_key", "eff", "rep"])
+
+
+def to_excel(df: pd.DataFrame, sheet: str = "Call Report"):
+    """Excel file with Date/Time as real dates shown as 09/30/2026 02:58 PM.
+    Returns None if openpyxl isn't installed."""
+    try:
+        import openpyxl  # noqa: F401
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return None
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl", datetime_format="mm/dd/yyyy hh:mm AM/PM") as w:
+        df.to_excel(w, index=False, sheet_name=sheet)
+        ws = w.sheets[sheet]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        for i, col in enumerate(df.columns, start=1):
+            width = max([len(str(col))] + [len(str(v)) for v in df[col].head(500)]) + 2
+            ws.column_dimensions[get_column_letter(i)].width = min(max(width, 10), 45)
+        if "Date/Time" in df.columns:
+            letter = get_column_letter(list(df.columns).index("Date/Time") + 1)
+            ws.column_dimensions[letter].width = 22
+            for cell in ws[letter][1:]:  # every row under the header
+                cell.number_format = "mm/dd/yyyy hh:mm AM/PM"
+    return buf.getvalue()
 
 
 def plural(n: int, word: str) -> str:
@@ -416,9 +442,17 @@ def page_call_report():
         return f"{t.month}/{t.day}/{t:%y} {t.hour % 12 or 12}:{t:%M} {'AM' if t.hour < 12 else 'PM'}"
     export = table.copy()
     export["Date/Time"] = export["Date/Time"].map(_us_time)
-    st.download_button("Download as CSV", export.to_csv(index=False).encode("utf-8"),
+    d1, d2, _ = st.columns([1, 1, 3])
+    xlsx = to_excel(table)
+    if xlsx:
+        d1.download_button("Download Excel", xlsx, file_name=f"call_report_{start}_{end}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           icon=":material/table_view:", type="primary", width="stretch")
+    d2.download_button("Download CSV", export.to_csv(index=False).encode("utf-8"),
                        file_name=f"call_report_{start}_{end}.csv", mime="text/csv",
-                       icon=":material/download:")
+                       icon=":material/download:", width="stretch")
+    if not xlsx:
+        st.caption("To enable the Excel download on this computer, run `pip install openpyxl` once.")
 
     # ---------- selected row: pick a lead / all calls to that number ----------
     sel = event.selection.rows if event and event.selection else []
