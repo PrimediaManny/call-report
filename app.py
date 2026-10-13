@@ -198,8 +198,106 @@ def remove_dialog(rows: pd.DataFrame):
 
 
 # ---------- page picker ----------
-page = st.sidebar.radio("Page", ["Call Report", "Contacts"], label_visibility="collapsed")
+page = st.sidebar.radio("Page", ["Call Report", "Contacts", "Upload Calls"], label_visibility="collapsed")
 st.sidebar.divider()
+
+if page == "Upload Calls":
+    st.title("Upload Calls")
+    st.caption("Add new calls from a CSV export. Columns needed: Direction, To, From, Date/Time, Duration "
+               "(same format as the call log). Calls already in the database are skipped, "
+               "so it's safe to upload a file that overlaps an earlier one.")
+    up = st.file_uploader("Call log CSV", type=["csv"])
+    if up is None:
+        st.stop()
+
+    raw = pd.read_csv(up, dtype=str, keep_default_na=False)
+    raw.columns = [str(c).strip() for c in raw.columns]
+    needed = ["Direction", "To", "From", "Date/Time", "Duration"]
+    missing = [c for c in needed if c not in raw.columns]
+    if missing:
+        st.error(f"This file is missing these columns: {', '.join(missing)}. "
+                 f"Columns found: {', '.join(raw.columns)}")
+        st.stop()
+
+    f = raw[needed].copy()
+    for c in needed:
+        f[c] = f[c].astype(str).str.strip()
+    # To: digits only
+    f["To"] = f["To"].str.replace(r"\.0$", "", regex=True).str.replace(r"\D", "", regex=True)
+    # From: blank -> empty; 433.0 -> 433
+    f["From"] = f["From"].str.replace(r"^(\d+)\.0$", r"\1", regex=True)
+    # Date/Time: store exactly like the existing rows, e.g. 10/9/26 4:40 PM
+    ts = pd.to_datetime(f["Date/Time"], format="%m/%d/%y %I:%M %p", errors="coerce")
+    retry = ts.isna() & (f["Date/Time"] != "")
+    if retry.any():
+        ts[retry] = pd.to_datetime(f.loc[retry, "Date/Time"], errors="coerce")
+    def _fmt(t):
+        h = t.hour % 12 or 12
+        return f"{t.month}/{t.day}/{t:%y} {h}:{t:%M} {'AM' if t.hour < 12 else 'PM'}"
+    f["Date/Time"] = [(_fmt(t) if pd.notna(t) else "") for t in ts]
+    # Duration: H:MM:SS like 0:00:57
+    td = pd.to_timedelta(f["Duration"], errors="coerce")
+    def _dur(orig, d):
+        if pd.isna(d):
+            return orig
+        s = int(d.total_seconds())
+        return f"{s // 3600}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+    f["Duration"] = [_dur(o, d) for o, d in zip(f["Duration"], td)]
+
+    bad = (f["To"] == "") | (f["Date/Time"] == "") | (f["Direction"] == "")
+    good = f[~bad]
+    if bad.any():
+        with st.expander(f"⚠️ {int(bad.sum())} row{'s' if int(bad.sum()) != 1 else ''} can't be read (missing To, Date/Time or Direction) "
+                         "and will be skipped"):
+            st.dataframe(raw[bad.values], hide_index=True, width="stretch")
+    if good.empty:
+        st.error("No usable rows in this file.")
+        st.stop()
+
+    payload = good.replace({"From": {"": None}}).to_dict(orient="records")
+    file_key = f"{up.name}-{up.size}-{len(payload)}"
+    if st.session_state.get("upload_key") != file_key:
+        with st.spinner("Checking which calls are already in the database..."):
+            res = sb.rpc("calls_upload", {"p_rows": payload, "p_commit": False}).execute().data[0]
+        st.session_state["upload_key"] = file_key
+        st.session_state["upload_preview"] = res
+    res = st.session_state["upload_preview"]
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Rows in file", f"{len(f):,}")
+    c2.metric("Already in database", f"{res['already_there']:,}")
+    c3.metric("New calls to add", f"{res['to_add']:,}")
+    c4.metric("Skipped (unreadable)", f"{int(bad.sum()):,}")
+    if res["to_add"]:
+        st.caption(f"New calls run from {res['first_call']} to {res['last_call']}.")
+    with st.expander("Preview the file (first 50 rows)"):
+        st.dataframe(good.head(50), hide_index=True, width="stretch")
+
+    @st.dialog("Confirm upload")
+    def confirm_upload(n: int):
+        st.write(f"Upload **{n:,}** new call{'s' if n != 1 else ''} to the database?")
+        yes, no = st.columns(2)
+        if yes.button("Yes, upload", type="primary", width="stretch"):
+            with st.spinner("Uploading..."):
+                out = sb.rpc("calls_upload", {"p_rows": payload, "p_commit": True}).execute().data[0]
+            load_calls.clear()
+            st.session_state["upload_key"] = None
+            st.session_state["upload_done"] = out["to_add"]
+            st.rerun()
+        if no.button("Cancel", width="stretch"):
+            st.rerun()
+
+    if st.session_state.get("upload_done") is not None:
+        n_done = st.session_state.pop("upload_done")
+        st.success(f"Added {n_done:,} call{'s' if n_done != 1 else ''}. They now show on the Call Report.")
+    elif res["to_add"] == 0:
+        st.info("Every call in this file is already in the database. Nothing to upload.")
+    else:
+        if st.button(f"Confirm: upload {res['to_add']:,} call{'s' if res['to_add'] != 1 else ''}", type="primary"):
+            confirm_upload(res["to_add"])
+    st.stop()
+
+
 
 if page == "Contacts":
     st.title("Contacts")
