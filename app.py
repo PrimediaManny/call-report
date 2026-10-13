@@ -292,7 +292,7 @@ def page_call_report():
 
     df = apply_rep_names(df)
     # Times Called = number of calls to that number inside the selected date range
-    df["Times Called"] = df.groupby("To")["To"].transform("count")
+    df["Times Called"] = df.groupby("To")["To"].transform("count").astype(int)
 
     with sec_calls:
         direction = st.segmented_control("Direction", ["All", "Outbound", "Inbound"], key="f_direction")
@@ -359,12 +359,15 @@ def page_call_report():
     view = view.sort_values(["From", "Media Market", "Lead Source", "Lead Id", "Date/Time"],
                             key=_sort_key, na_position="last", kind="stable")
     table = view[CALL_COLS + LEAD_COLS].reset_index(drop=True)
+    for col in ["Times Called", "Leads Matched"]:  # whole numbers, never 86.000000
+        table[col] = pd.to_numeric(table[col], errors="coerce").fillna(0).astype(int)
 
     # Orange = several matching leads and nobody has picked/confirmed one yet
     needs_pick = ((view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked")).to_numpy()
 
     if len(table) <= 10000:  # colouring very large tables makes the page slow
         shown = (table.style
+                 .format({"Times Called": "{:d}", "Leads Matched": "{:d}"})
                  .set_properties(subset=LEAD_COLS, **{"background-color": "rgba(255, 230, 0, 0.12)"})
                  .map(lambda v: "background-color: rgba(255, 99, 132, 0.25)" if v >= 3 else "",
                       subset=["Times Called"])
@@ -386,7 +389,13 @@ def page_call_report():
                 width="small", help="How many MMS leads contain this number. Click the row to pick one."),
         },
     )
-    st.download_button("Download as CSV", table.to_csv(index=False).encode("utf-8"),
+    def _us_time(t):  # 9/30/26 2:58 PM, same as the table (works on Windows too)
+        if pd.isna(t):
+            return ""
+        return f"{t.month}/{t.day}/{t:%y} {t.hour % 12 or 12}:{t:%M} {'AM' if t.hour < 12 else 'PM'}"
+    export = table.copy()
+    export["Date/Time"] = export["Date/Time"].map(_us_time)
+    st.download_button("Download as CSV", export.to_csv(index=False).encode("utf-8"),
                        file_name=f"call_report_{start}_{end}.csv", mime="text/csv",
                        icon=":material/download:")
 
