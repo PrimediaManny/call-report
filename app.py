@@ -235,33 +235,79 @@ def _filter_defaults() -> dict:
             "f_direction": "All", "f_from": [], "f_match": "All", "f_min_times": 1, "f_search": ""}
 
 
+FILTER_KEYS = list(_filter_defaults())
+
+
 def _reset_filters():
-    for k, v in _filter_defaults().items():
+    defaults = _filter_defaults()
+    for k, v in defaults.items():
         st.session_state[k] = v
+    st.session_state["applied"] = defaults
+
+
+def _apply_filters():
+    picked = st.session_state.get("f_dates")
+    if not isinstance(picked, (list, tuple)) or len(picked) != 2:
+        st.session_state["apply_error"] = "Pick an end date to finish the date range, then press Apply."
+        return
+    st.session_state["applied"] = {k: st.session_state.get(k) for k in FILTER_KEYS}
 
 
 def page_call_report():
     for k, v in _filter_defaults().items():  # first visit: start every filter at its default
         st.session_state.setdefault(k, v)
+    st.session_state.setdefault("applied", _filter_defaults())
 
-    # Sidebar sections are created up front so they stay in order while being filled later
-    sec_calls, sec_leads, sec_narrow, sec_tools = (st.sidebar.container() for _ in range(4))
+    # The report only uses the filters that were last APPLIED (changing a filter does nothing until Apply)
+    a = st.session_state["applied"]
+    start, end = a["f_dates"]
+    sources = a["f_sources"] or []
+    started_from = a["f_started_from"]
+    direction = a["f_direction"] or "All"
+    froms = a["f_from"] or []
+    found = a["f_match"] or "All"
+    min_times = a["f_min_times"] or 1
+    search = a["f_search"] or ""
 
-    with sec_calls:
-        sidebar_section("Calls")
-        picked = st.date_input("Date range", key="f_dates", format="MM/DD/YYYY")
-    with sec_leads:
-        sidebar_section("MMS leads to match")
-        sources = st.multiselect(
-            "Lead Source", load_lead_sources(), key="f_sources", placeholder="All sources",
-            help="Only match calls to MMS leads with these Lead Sources. Calls without a lead from "
-                 "these sources are hidden.")
-        started_from = st.date_input(
-            "Lead Started from", key="f_started_from", format="MM/DD/YYYY",
-            help="Only match calls to MMS leads started on or after this date. Leave empty for any date.")
-    with sec_tools:
-        st.divider()
+    df = load_calls(start, end, tuple(sorted(sources)), started_from)
+    if not df.empty:
+        df = apply_rep_names(df)
+        # Times Called = number of calls to that number inside the selected date range
+        df["Times Called"] = df.groupby("To")["To"].transform("count").astype(int)
+
+    # Rep choices: everyone on the Contacts list plus anyone in the loaded calls
+    reps = load_contacts()["rep"].dropna().astype(str).str.strip()
+    from_options = sorted(set(reps[reps != ""]) | set(df["From"].dropna().astype(str)) if not df.empty
+                          else set(reps[reps != ""]))
+    st.session_state["f_from"] = [x for x in (st.session_state.get("f_from") or []) if x in from_options]
+
+    # ---------- sidebar: filters only take effect when Apply is pressed ----------
+    with st.sidebar:
+        with st.form("call_filters", border=False):
+            sidebar_section("Calls")
+            st.date_input("Date range", key="f_dates", format="MM/DD/YYYY")
+            st.segmented_control("Direction", ["All", "Outbound", "Inbound"], key="f_direction")
+            st.multiselect("From", from_options, key="f_from", placeholder="All reps")
+            st.text_input("Search calls", key="f_search", placeholder="Number, company, contact, lead id",
+                          icon=":material/search:")
+            sidebar_section("MMS leads to match")
+            st.multiselect("Lead Source", load_lead_sources(), key="f_sources", placeholder="All sources",
+                           help="Only match calls to MMS leads with these Lead Sources. Calls without a lead "
+                                "from these sources are hidden.")
+            st.date_input("Lead Started from", key="f_started_from", format="MM/DD/YYYY",
+                          help="Only match calls to MMS leads started on or after this date. "
+                               "Leave empty for any date.")
+            sidebar_section("Narrow results")
+            st.segmented_control("Lead match", ["All", "Found", "Not Found"], key="f_match")
+            st.number_input("Times Called at least", min_value=1, step=1, key="f_min_times")
+            st.write("")
+            st.form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
+                                  width="stretch", on_click=_apply_filters)
+        err = st.session_state.pop("apply_error", None)
+        if err:
+            st.warning(err)
         st.button("Reset filters", icon=":material/restart_alt:", on_click=_reset_filters, width="stretch")
+        st.divider()
         with st.expander("Maintenance", icon=":material/build:"):
             if st.button("Reload calls", width="stretch", help="Fetch the latest calls from the database"):
                 st.cache_data.clear()
@@ -275,13 +321,15 @@ def page_call_report():
                 st.rerun()
 
     st.title("Call Report")
-    if not isinstance(picked, (list, tuple)) or len(picked) != 2:
-        st.info("Pick an end date to finish the date range.")
-        return
-    start, end = picked
-
-    df = load_calls(start, end, tuple(sorted(sources)), started_from)
-    header_slot = st.empty()  # filled in once the From filter is known
+    # Header label: who + lead filters + date range (what is currently applied)
+    who = ", ".join(froms) if froms else "All reps"
+    src = f"  ·  {', '.join(sources)}" if sources else ""
+    if started_from:
+        src += f"  ·  Leads started from {started_from:%m/%d/%Y}"
+    st.markdown(f'<div class="page-sub">{who}{src}  ·  {start:%m/%d/%Y} to {end:%m/%d/%Y}</div>',
+                unsafe_allow_html=True)
+    st.caption("Change filters on the left, then press **Apply filters**. "
+               "Times Called counts calls to that number within this date range.")
 
     if df.empty:
         lead_filter = " and ".join(x for x in [
@@ -290,35 +338,8 @@ def page_call_report():
         st.warning("No calls in this date range" + (f" match a lead {lead_filter}." if lead_filter else "."))
         return
 
-    df = apply_rep_names(df)
-    # Times Called = number of calls to that number inside the selected date range
-    df["Times Called"] = df.groupby("To")["To"].transform("count").astype(int)
-
-    with sec_calls:
-        direction = st.segmented_control("Direction", ["All", "Outbound", "Inbound"], key="f_direction")
-        from_options = sorted(df["From"].dropna().astype(str).unique())
-        # keep only reps that still exist in this date range
-        st.session_state["f_from"] = [x for x in st.session_state.get("f_from", []) if x in from_options]
-        froms = st.multiselect("From", from_options, key="f_from", placeholder="All reps")
-        search = st.text_input("Search calls", key="f_search", placeholder="Number, company, contact, lead id",
-                               icon=":material/search:")
-    with sec_narrow:
-        sidebar_section("Narrow results")
-        found = st.segmented_control("Lead match", ["All", "Found", "Not Found"], key="f_match")
-        min_times = st.number_input("Times Called at least", min_value=1, step=1, key="f_min_times")
-
-    # Header label: who + lead filters + date range
-    who = ", ".join(froms) if froms else "All reps"
-    with header_slot.container():
-        src = f"  ·  {', '.join(sources)}" if sources else ""
-        if started_from:
-            src += f"  ·  Leads started from {started_from:%m/%d/%Y}"
-        st.markdown(f'<div class="page-sub">{who}{src}  ·  {start:%m/%d/%Y} to {end:%m/%d/%Y}</div>',
-                    unsafe_allow_html=True)
-        st.caption("Times Called counts calls to that number within this date range")
-
     view = df.copy()
-    if direction and direction != "All":
+    if direction != "All":
         view = view[view["Direction"].fillna("").str.lower() == direction.lower()]
     if froms:
         view = view[view["From"].astype(str).isin(froms)]
