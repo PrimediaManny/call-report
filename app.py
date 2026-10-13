@@ -779,6 +779,13 @@ def page_upload_leads():
     for c in use_cols:
         f[c] = f[c].astype(str).str.strip()
     f["Lead Id"] = f["Lead Id"].str.replace(r"\.0+$", "", regex=True)  # "235486.0" -> "235486"
+    # Dates: store them like the rest of MMS (Excel saves 10/1/2026 or 10/12/2026 16:21 instead)
+    date_only = ["Lead Started", "Mmr Completed"]
+    date_time = ["Last Edited", "Phase1 Completed", "Phase2 Completed", "Phase3 Completed", "Ddr Completed"]
+    for col in [c for c in date_only + date_time if c in f.columns]:
+        parsed = pd.to_datetime(f[col], errors="coerce", format="mixed")
+        fmt = "%Y-%m-%d" if col in date_only else "%Y-%m-%d %H:%M:%S"
+        f[col] = [p.strftime(fmt) if pd.notna(p) else orig for p, orig in zip(parsed, f[col])]
     bad = ~f["Lead Id"].str.fullmatch(r"\d+")
     dupes = int(f[~bad].duplicated("Lead Id", keep="last").sum())
     good = f[~bad].drop_duplicates("Lead Id", keep="last")
