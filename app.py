@@ -12,6 +12,7 @@ Contact Email (phase2), Company (phase2), Company Phone (phase2), Company (phase
 Contact Phone (phase3), Phase2 Comments. The matching runs inside Supabase (call_report_v4).
 """
 import hmac
+import html
 import io
 from datetime import date, timedelta
 
@@ -41,6 +42,38 @@ st.markdown("""
 [data-testid="stMetricLabel"] { opacity: .75; }
 /* subtitle under page titles */
 .page-sub { font-size: 1.05rem; font-weight: 600; margin: -0.4rem 0 0.2rem 0; }
+/* ---- Call Report ---- */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: .4rem 0 1rem 0; }
+.kpi { border: 1px solid rgba(128,128,128,0.22); border-radius: 12px; padding: 12px 16px; background: rgba(128,128,128,0.04); }
+.kpi .kl { font-size: .82rem; opacity: .75; font-weight: 500; }
+.kpi .kv { font-size: 1.85rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.25; margin-top: 4px; }
+.kpi .kd { font-size: .78rem; opacity: .6; }
+.kpi.alert { border-color: rgba(245,158,11,.55); background: rgba(245,158,11,.10); }
+.kpi.alert .kv { color: #b45309; }
+.applied { margin: .2rem 0 .6rem 0; font-size: .92rem; display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.applied b { font-weight: 600; }
+.sortpill { border: 1px solid rgba(128,128,128,0.25); border-radius: 20px; padding: 2px 10px; font-size: .78rem; opacity: .75; }
+.halves { display: flex; gap: 0; margin: .2rem 0 0 0; overflow: hidden; font-size: .7rem; font-weight: 700; letter-spacing: .09em; }
+.halves .h-call { padding: 4px 10px; opacity: .65; flex: none; }
+.halves .h-lead { padding: 4px 10px; background: rgba(255,230,0,.18); color: #8a6400; border-radius: 6px 6px 0 0; flex: none; }
+.lc { border: 1px solid rgba(128,128,128,0.22); border-radius: 12px; padding: 16px; margin-bottom: .6rem; }
+.lc.empty { opacity: .8; border-style: dashed; }
+.lc-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.lc-id { font-size: .7rem; font-weight: 700; letter-spacing: .05em; opacity: .55; }
+.lc-name { font-size: 1.15rem; font-weight: 700; margin-top: 2px; line-height: 1.3; }
+.lc-meta { font-size: .85rem; opacity: .7; margin-top: 2px; }
+.pillst { background: rgba(31,79,216,.10); color: #1f4fd8; border-radius: 6px; padding: 3px 8px; font-size: .75rem; font-weight: 600; white-space: nowrap; }
+.lc-warn { margin-top: 10px; background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.45); color: #8a4b00;
+           border-radius: 8px; padding: 8px 10px; font-size: .82rem; }
+.lc-kv { display: grid; grid-template-columns: 105px 1fr; gap: 6px 10px; margin-top: 12px; font-size: .84rem; }
+.lc-kv span:nth-child(odd) { opacity: .55; }
+.ok { color: #127a4a; font-weight: 600; }
+.mini { margin-top: 12px; border-top: 1px solid rgba(128,128,128,0.2); padding-top: 10px; }
+.mini h4 { font-size: .82rem; font-weight: 700; margin: 0 0 6px 0; padding: 0; }
+.mrow { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: .8rem;
+        border-bottom: 1px dashed rgba(128,128,128,0.2); }
+.mrow span:last-child, .mrow.muted { opacity: .6; }
+.fresh { font-size: .78rem; line-height: 1.6; opacity: .75; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -208,15 +241,71 @@ def plural(n: int, word: str) -> str:
 # =====================================================================================
 # CALL REPORT
 # =====================================================================================
-def _reset_table():
-    # Don't rebuild the table (that would reset its sorting/search); just remember this
-    # selection was handled so the box doesn't pop up again until another row is clicked.
-    st.session_state["pick_handled"] = st.session_state.get("pick_current")
-    st.session_state["suppress_pick"] = True  # rows may shift after a pick; don't auto-open on the next load
+def fmt_phone(v) -> str:
+    d = "".join(ch for ch in str(v) if ch.isdigit())
+    if len(d) == 11 and d.startswith("1"):
+        d = d[1:]
+    return f"{d[:3]}-{d[3:6]}-{d[6:]}" if len(d) == 10 else str(v)
 
 
-@st.dialog("Pick a lead", width="large")
-def pick_lead_dialog(number: str, current_lead: str, choice: str):
+def dur_seconds(s) -> int:
+    try:
+        parts = [int(x) for x in str(s).strip().split(":")]
+    except ValueError:
+        return 0
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    h, m, sec = parts[-3:]
+    return h * 3600 + m * 60 + sec
+
+
+def fmt_total(seconds: int) -> str:
+    h, rem = divmod(int(seconds), 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m {s:02d}s"
+
+
+def fmt_short(seconds: float) -> str:
+    m, s = divmod(int(round(seconds)), 60)
+    return f"{m}:{s:02d}"
+
+
+def us_time(t, with_date=True) -> str:  # 9/30/26 2:58 PM (works on Windows too)
+    if t is None or pd.isna(t):
+        return ""
+    clock = f"{t.hour % 12 or 12}:{t:%M} {'AM' if t.hour < 12 else 'PM'}"
+    return f"{t.month}/{t.day}/{t:%y} {clock}" if with_date else clock
+
+
+def esc(v) -> str:
+    return html.escape("" if v is None else str(v))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_needs_review(days: int) -> pd.DataFrame:
+    return pd.DataFrame(sb.rpc("needs_review", {"p_days": days}).execute().data,
+                        columns=["phone10", "calls", "last_call", "callers", "leads_matched"])
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_freshness() -> dict:
+    data = sb.rpc("data_freshness", {}).execute().data
+    return data[0] if data else {}
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_lead(lead_id: str) -> dict:
+    data = sb.table("mms").select("*").eq("Lead Id", lead_id).execute().data
+    return data[0] if data else {}
+
+
+def _after_pick():
+    load_calls.clear()
+    load_needs_review.clear()
+
+
+def render_pick(number: str, current_lead: str, choice: str, key: str):
+    """Lead chooser for a phone number that matches several MMS leads."""
     leads = pd.DataFrame(sb.rpc("leads_for_number", {"p_phone": number}).execute().data)
     if leads.empty:
         st.info("No matching leads found.")
@@ -226,40 +315,58 @@ def pick_lead_dialog(number: str, current_lead: str, choice: str):
         "company_in_ad": "Company In Ad", "lead_owner": "Lead Owner", "status": "Status",
         "matched_on": "Matched On"})
     leads = leads[["Lead Id", "Market", "Company In Ad", "Lead Owner", "Status", "Last Edited", "Matched On"]]
-    st.write(f"**{number}** matches **{len(leads)} leads**. Currently showing **{current_lead}** "
-             f"({choice.lower() or 'only match'}). Click a lead, then **Use this lead**. "
-             "The choice applies to every call to this number.")
     picked = st.dataframe(leads, hide_index=True, width="stretch", on_select="rerun",
-                          selection_mode="single-row", key=f"pick_{number}")
+                          selection_mode="single-row", key=f"{key}_{number}")
     rows = picked.selection.rows if picked and picked.selection else []
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     if rows:
-        lead = leads.iloc[rows[0]]["Lead Id"]
+        lead = str(leads.iloc[rows[0]]["Lead Id"])
         label = f"Confirm lead {lead}" if lead == current_lead else f"Use lead {lead}"
-        if c1.button(label, type="primary", width="stretch"):
-            sb.table("lead_picks").upsert({"phone10": str(number)[-10:], "lead_id": str(lead),
+        if c1.button(label, type="primary", width="stretch", key=f"{key}_use_{number}"):
+            sb.table("lead_picks").upsert({"phone10": str(number)[-10:], "lead_id": lead,
                                            "picked_at": pd.Timestamp.now("UTC").isoformat()},
                                           on_conflict="phone10").execute()
-            load_calls.clear()
-            _reset_table()
+            _after_pick()
             st.rerun()
     else:
-        c1.button("Use this lead", disabled=True, width="stretch")
-    if choice == "Picked" and c2.button("Undo pick (go back to automatic)", width="stretch"):
+        c1.button("Click a lead above first", disabled=True, width="stretch", key=f"{key}_dis_{number}")
+    if choice == "Picked" and c2.button("Undo pick (back to automatic)", width="stretch",
+                                        key=f"{key}_undo_{number}"):
         sb.table("lead_picks").delete().eq("phone10", str(number)[-10:]).execute()
-        load_calls.clear()
-        _reset_table()
+        _after_pick()
         st.rerun()
-    if c3.button("Close", width="stretch"):
-        _reset_table()
-        st.rerun()
+
+
+@st.dialog("Change lead", width="large")
+def pick_lead_dialog(number: str, current_lead: str, choice: str):
+    st.write(f"**{fmt_phone(number)}** matches several MMS leads. Currently showing **{current_lead}** "
+             f"({(choice or 'only match').lower()}). Click a lead, then **Use lead**. "
+             "The choice applies to every call to this number.")
+    render_pick(number, current_lead, choice, "dlg")
+
+
+# ---------- filters (only take effect when Apply is pressed) ----------
+DATE_PRESETS = ["Yesterday", "Last 7 days", "This month", "Custom"]
+DIRECTIONS = {"All": "All", "Out": "outbound", "In": "inbound"}
+SHOW_OPTIONS = ["All", "Matched", "Not found", "Needs pick"]
+
+
+def _date_range(preset: str, custom):
+    today = date.today()
+    if preset == "Last 7 days":
+        return today - timedelta(days=6), today
+    if preset == "This month":
+        return today.replace(day=1), today
+    if preset == "Custom" and isinstance(custom, (list, tuple)) and len(custom) == 2:
+        return custom[0], custom[1]
+    y = today - timedelta(days=1)
+    return y, y
 
 
 def _filter_defaults() -> dict:
-    today = date.today()
-    yesterday = today - timedelta(days=1)
-    return {"f_dates": (yesterday, yesterday), "f_sources": [], "f_started_from": None,
-            "f_direction": "All", "f_from": [], "f_match": "All", "f_min_times": 1, "f_search": ""}
+    y = date.today() - timedelta(days=1)
+    return {"f_preset": "Yesterday", "f_dates": (y, y), "f_from": [], "f_direction": "All",
+            "f_sources": [], "f_started_from": None, "f_show": "All", "f_search": ""}
 
 
 FILTER_KEYS = list(_filter_defaults())
@@ -273,90 +380,154 @@ def _reset_filters():
 
 
 def _apply_filters():
-    picked = st.session_state.get("f_dates")
-    if not isinstance(picked, (list, tuple)) or len(picked) != 2:
-        st.session_state["apply_error"] = "Pick an end date to finish the date range, then press Apply."
-        return
+    if st.session_state.get("f_preset") == "Custom":
+        custom = st.session_state.get("f_dates")
+        if not isinstance(custom, (list, tuple)) or len(custom) != 2:
+            st.session_state["apply_error"] = "Pick both a start and an end date for the custom range."
+            return
     st.session_state["applied"] = {k: st.session_state.get(k) for k in FILTER_KEYS}
+
+
+def match_label(row) -> str:
+    if row["Lead Id"] == "Not Found":
+        return "— Not found"
+    n = int(row["Leads Matched"] or 0)
+    if row["Lead Choice"] == "Picked":
+        return "✓ Picked"
+    if n >= 2:
+        return f"⚑ Pick 1 of {n}"
+    return "✓ 1 lead"
+
+
+def kpi_cards(cards: list):
+    html_cards = "".join(
+        f'<div class="kpi{" alert" if c.get("alert") else ""}"><div class="kl">{c["label"]}</div>'
+        f'<div class="kv">{c["value"]}</div><div class="kd">{c.get("note", "")}</div></div>' for c in cards)
+    st.markdown(f'<div class="kpis">{html_cards}</div>', unsafe_allow_html=True)
+
+
+def lead_card(r, df: pd.DataFrame):
+    """Right-hand panel for the selected call."""
+    number = str(r["To"])
+    if r["Lead Id"] == "Not Found":
+        st.markdown(f'<div class="lc"><div class="lc-id">NO MMS LEAD FOUND</div>'
+                    f'<div class="lc-name">{fmt_phone(number)}</div>'
+                    f'<div class="lc-meta">This number isn\'t in any of the searched MMS columns.</div></div>',
+                    unsafe_allow_html=True)
+        if st.button("Search MMS for this number", icon=":material/person_search:", width="stretch"):
+            st.session_state["ls_q"] = number
+            st.switch_page(PAGE_LEAD_SEARCH)
+        return
+    lead_id = str(r["Lead Id"])
+    rec = get_lead(lead_id)
+    n_leads = int(r["Leads Matched"] or 0)
+    owner_note = ' <span class="ok">· matches caller</span>' if r["Lead Choice"] == "Rep's lead" else ""
+    rows = [("Owner", esc(rec.get("Lead Owner")) + owner_note),
+            ("Lead started", esc(rec.get("Lead Started"))),
+            ("Last edited", esc(rec.get("Last Edited"))),
+            ("Phone in ad", esc(fmt_phone(rec.get("Phone Number In Ad") or "")) if rec.get("Phone Number In Ad") else ""),
+            ("Contact phone", esc(rec.get("Contact Phone (phase2)"))),
+            ("Found in", esc(r["Matched On"]))]
+    kv = "".join(f"<span>{k}</span><span>{v}</span>" for k, v in rows if v)
+    warn = ""
+    if n_leads >= 2 and r["Lead Choice"] != "Picked":
+        how = "the caller's own lead" if r["Lead Choice"] == "Rep's lead" else "the most recently edited lead"
+        warn = (f'<div class="lc-warn">⚑ This number matches <b>{n_leads} leads</b>. Showing {how} — '
+                f'use <b>Change lead</b> to pick the right one.</div>')
+    status = f'<span class="pillst">{esc(rec.get("Status"))}</span>' if rec.get("Status") else ""
+    calls = df[df["To"] == r["To"]].sort_values("Date/Time", ascending=False)
+    call_rows = "".join(
+        f'<div class="mrow"><span>{us_time(c["Date/Time"])} · {esc(c["From"])}</span><span>{esc(c["Duration"])}</span></div>'
+        for _, c in calls.head(8).iterrows())
+    more = f'<div class="mrow muted">+ {len(calls) - 8} more</div>' if len(calls) > 8 else ""
+    st.markdown(
+        f'<div class="lc"><div class="lc-top"><div><div class="lc-id">LEAD {esc(lead_id)} · '
+        f'{esc((rec.get("Lead Source") or "").upper())}</div>'
+        f'<div class="lc-name">{esc(rec.get("Company In Ad") or rec.get("Company (phase2)") or "")}</div>'
+        f'<div class="lc-meta">{esc(" · ".join(x for x in [rec.get("Contact Name (phase2)"), rec.get("Media Market")] if x))}</div>'
+        f'</div>{status}</div>{warn}<div class="lc-kv">{kv}</div>'
+        f'<div class="mini"><h4>Calls to this number in this range ({len(calls)})</h4>{call_rows}{more}</div></div>',
+        unsafe_allow_html=True)
+    b1, b2 = st.columns(2)
+    if b1.button("Open full lead", width="stretch", key=f"open_{lead_id}"):
+        st.session_state["ls_q"] = lead_id
+        st.switch_page(PAGE_LEAD_SEARCH)
+    if b2.button("Change lead", width="stretch", key=f"chg_{r['call_id']}", disabled=n_leads < 2,
+                 help=None if n_leads >= 2 else "This number only matches one lead"):
+        pick_lead_dialog(number, lead_id, str(r["Lead Choice"]))
 
 
 def page_call_report():
     for k, v in _filter_defaults().items():  # first visit: start every filter at its default
         st.session_state.setdefault(k, v)
     st.session_state.setdefault("applied", _filter_defaults())
-
-    # The report only uses the filters that were last APPLIED (changing a filter does nothing until Apply)
     a = st.session_state["applied"]
-    start, end = a["f_dates"]
+    start, end = _date_range(a["f_preset"], a["f_dates"])
     sources = a["f_sources"] or []
     started_from = a["f_started_from"]
     direction = a["f_direction"] or "All"
     froms = a["f_from"] or []
-    found = a["f_match"] or "All"
-    min_times = a["f_min_times"] or 1
+    show = a["f_show"] or "All"
     search = a["f_search"] or ""
 
     df = load_calls(start, end, tuple(sorted(sources)), started_from)
     if not df.empty:
         df = apply_rep_names(df)
-        # Times Called = number of calls to that number inside the selected date range
         df["Times Called"] = df.groupby("To")["To"].transform("count").astype(int)
+        df["Leads Matched"] = pd.to_numeric(df["Leads Matched"], errors="coerce").fillna(0).astype(int)
 
-    # Rep choices: everyone on the Contacts list plus anyone in the loaded calls
     reps = load_contacts()["rep"].dropna().astype(str).str.strip()
-    from_options = sorted(set(reps[reps != ""]) | set(df["From"].dropna().astype(str)) if not df.empty
-                          else set(reps[reps != ""]))
+    from_options = sorted(set(reps[reps != ""]) | (set(df["From"].dropna().astype(str)) if not df.empty else set()))
     st.session_state["f_from"] = [x for x in (st.session_state.get("f_from") or []) if x in from_options]
 
-    # ---------- sidebar: filters only take effect when Apply is pressed ----------
-    with st.sidebar:
-        with st.form("call_filters", border=False):
-            sidebar_section("Calls")
-            st.date_input("Date range", key="f_dates", format="MM/DD/YYYY")
-            st.segmented_control("Direction", ["All", "Outbound", "Inbound"], key="f_direction")
-            st.multiselect("From", from_options, key="f_from", placeholder="All reps")
-            st.text_input("Search calls", key="f_search", placeholder="Number, company, contact, lead id",
-                          icon=":material/search:")
-            sidebar_section("MMS leads to match")
-            st.multiselect("Lead Source", load_lead_sources(), key="f_sources", placeholder="All sources",
-                           help="Only match calls to MMS leads with these Lead Sources. Calls without a lead "
-                                "from these sources are hidden.")
-            st.date_input("Lead Started from", key="f_started_from", format="MM/DD/YYYY",
-                          help="Only match calls to MMS leads started on or after this date. "
-                               "Leave empty for any date.")
-            sidebar_section("Narrow results")
-            st.segmented_control("Lead match", ["All", "Found", "Not Found"], key="f_match")
-            st.number_input("Times Called at least", min_value=1, step=1, key="f_min_times")
-            st.write("")
-            st.form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
-                                  width="stretch", on_click=_apply_filters)
-        err = st.session_state.pop("apply_error", None)
-        if err:
-            st.warning(err)
-        st.button("Reset filters", icon=":material/restart_alt:", on_click=_reset_filters, width="stretch")
-        st.divider()
-        with st.expander("Maintenance", icon=":material/build:"):
-            if st.button("Reload calls", width="stretch", help="Fetch the latest calls from the database"):
-                st.cache_data.clear()
-                st.rerun()
-            if st.button("Refresh lead matching", width="stretch",
-                         help="Rebuild the phone lookup from all of MMS. Only needed if MMS was "
-                              "changed outside this app."):
-                with st.spinner("Rebuilding phone lookup from MMS..."):
-                    sb.rpc("refresh_mms_phone_lookup", {}).execute()
-                st.cache_data.clear()
-                st.rerun()
+    # ---------- header ----------
+    h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
+    with h1:
+        st.title("Call Report")
+        st.caption("Every call, matched to its MMS lead. Set filters, then **Apply filters**.")
+    dl_slot = h2.container()
 
-    st.title("Call Report")
-    # Header label: who + lead filters + date range (what is currently applied)
-    who = ", ".join(froms) if froms else "All reps"
-    src = f"  ·  {', '.join(sources)}" if sources else ""
+    # ---------- filter bar ----------
+    with st.form("call_filters"):
+        r1 = st.columns([2.4, 1.5, 1.8, 1.2])
+        r1[0].segmented_control("Dates", DATE_PRESETS, key="f_preset")
+        r1[1].date_input("Custom range", key="f_dates", format="MM/DD/YYYY",
+                         help="Used when Dates is set to Custom")
+        r1[2].multiselect("Rep", from_options, key="f_from", placeholder="All reps")
+        r1[3].segmented_control("Direction", list(DIRECTIONS), key="f_direction")
+        r2 = st.columns([2.4, 1.5, 3.0])
+        r2[0].multiselect("Lead Source", load_lead_sources(), key="f_sources", placeholder="All sources",
+                          help="Only match calls to MMS leads from these sources")
+        r2[1].date_input("Lead started from", key="f_started_from", format="MM/DD/YYYY",
+                         help="Only match calls to MMS leads started on or after this date")
+        r2[2].segmented_control("Show", SHOW_OPTIONS, key="f_show")
+        r3 = st.columns([4.6, 1, 1.3], vertical_alignment="bottom")
+        r3[0].text_input("Search", key="f_search", placeholder="Number, company, contact, lead id",
+                         icon=":material/search:")
+        r3[1].form_submit_button("Reset", width="stretch", on_click=_reset_filters)
+        r3[2].form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
+                                 width="stretch", on_click=_apply_filters)
+    err = st.session_state.pop("apply_error", None)
+    if err:
+        st.warning(err)
+
+    # ---------- what's applied ----------
+    bits = [", ".join(froms) if froms else "All reps"]
+    if direction != "All":
+        bits.append("Outbound only" if direction == "Out" else "Inbound only")
+    if sources:
+        bits.append(", ".join(sources))
     if started_from:
-        src += f"  ·  Leads started from {started_from:%m/%d/%Y}"
-    st.markdown(f'<div class="page-sub">{who}{src}  ·  {start:%m/%d/%Y} to {end:%m/%d/%Y}</div>',
+        bits.append(f"Leads started from {started_from:%m/%d/%Y}")
+    if show != "All":
+        bits.append(show)
+    if search.strip():
+        bits.append(f'Search "{search.strip()}"')
+    when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
+    bits.append(when)
+    st.markdown(f'<div class="applied">Showing <b>{esc(" · ".join(bits))}</b>'
+                f'<span class="sortpill">Sorted by Rep → Market → Source → Lead Id → Time</span></div>',
                 unsafe_allow_html=True)
-    st.caption("Change filters on the left, then press **Apply filters**. "
-               "Times Called counts calls to that number within this date range.")
 
     if df.empty:
         lead_filter = " and ".join(x for x in [
@@ -367,112 +538,225 @@ def page_call_report():
 
     view = df.copy()
     if direction != "All":
-        view = view[view["Direction"].fillna("").str.lower() == direction.lower()]
+        view = view[view["Direction"].fillna("").str.lower() == DIRECTIONS[direction]]
     if froms:
         view = view[view["From"].astype(str).isin(froms)]
-    if found == "Found":
+    needs = (view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked")
+    if show == "Matched":
         view = view[view["Lead Id"] != "Not Found"]
-    elif found == "Not Found":
+    elif show == "Not found":
         view = view[view["Lead Id"] == "Not Found"]
-    view = view[view["Times Called"] >= min_times]
+    elif show == "Needs pick":
+        view = view[needs.reindex(view.index, fill_value=False)]
     if search.strip():
         s = search.strip().lower()
+        s_digits = "".join(ch for ch in s if ch.isdigit())
         hay = view[["To", "From", "Ext / ID", "Company In Ad", "Contact Name (phase2)", "Lead Id"]].fillna(
             "").astype(str).apply(lambda c: c.str.lower()).agg(" ".join, axis=1)
-        view = view[hay.str.contains(s, regex=False)]
+        hit = hay.str.contains(s, regex=False)
+        if len(s_digits) >= 4:
+            hit |= view["To"].astype(str).str.contains(s_digits, regex=False)
+        view = view[hit]
 
-    # ---------- summary ----------
+    # ---------- counters ----------
+    secs = view["Duration"].map(dur_seconds)
+    out_n = int(view["Direction"].fillna("").str.lower().eq("outbound").sum())
+    in_n = int(view["Direction"].fillna("").str.lower().eq("inbound").sum())
+    uniq = view["To"].nunique()
     matched = int((view["Lead Id"] != "Not Found").sum())
-    is_out = view["Direction"].fillna("").str.lower().eq("outbound")
-    is_in = view["Direction"].fillna("").str.lower().eq("inbound")
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Total Calls", f"{len(view):,}")
-    k2.metric("Outbound", f"{int(is_out.sum()):,}")
-    k3.metric("Inbound", f"{int(is_in.sum()):,}")
-    k4.metric("Unique numbers", f"{view['To'].nunique():,}")
-    k5.metric("Matched to a lead", f"{matched:,}",
-              f"{matched / len(view):.0%}" if len(view) else None, delta_color="off")
-    k6.metric("Not Found", f"{len(view) - matched:,}")
+    needs_n = view.loc[(view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked"), "To"].nunique()
+    called3 = view.loc[view["Times Called"] >= 3, "To"].nunique()
+    kpi_cards([
+        {"label": "Total calls", "value": f"{len(view):,}", "note": f"{out_n:,} outbound · {in_n:,} inbound"},
+        {"label": "Unique numbers", "value": f"{uniq:,}",
+         "note": f"{len(view) / uniq:.1f} calls per number" if uniq else ""},
+        {"label": "Matched to a lead", "value": f"{matched:,}",
+         "note": f"{matched / len(view):.0%} of calls · {len(view) - matched:,} not found" if len(view) else ""},
+        {"label": "Talk time", "value": fmt_total(secs.sum()),
+         "note": f"avg {fmt_short(secs.mean())} per call" if len(view) else ""},
+        {"label": "Called 3+ times", "value": f"{called3:,}", "note": "numbers in this range"},
+        {"label": "⚠ Needs a lead picked", "value": f"{needs_n:,}", "note": "numbers match 2+ leads",
+         "alert": needs_n > 0},
+    ])
 
-    # ---------- table: calls on the left, MMS lead on the right ----------
-    # Default sort (same as the Excel report):
-    # From A-Z, Media Market A-Z, Lead Source A-Z, Lead Id smallest-largest, Date/Time oldest-newest
+    if view.empty:
+        st.info("No calls match these filters.")
+        return
+
+    # ---------- table data ----------
     def _sort_key(col: pd.Series) -> pd.Series:
         if col.name == "Lead Id":
             return pd.to_numeric(col, errors="coerce")  # "Not Found" goes to the bottom of each group
         if col.name == "Date/Time":
             return col
-        return col.astype("string").str.lower()  # A-Z ignoring upper/lower case, blanks last
+        return col.astype("string").str.lower()
 
     view = view.sort_values(["From", "Media Market", "Lead Source", "Lead Id", "Date/Time"],
-                            key=_sort_key, na_position="last", kind="stable")
-    table = view[CALL_COLS + LEAD_COLS].reset_index(drop=True)
-    for col in ["Times Called", "Leads Matched"]:  # whole numbers, never 86.000000
-        table[col] = pd.to_numeric(table[col], errors="coerce").fillna(0).astype(int)
+                            key=_sort_key, na_position="last", kind="stable").reset_index(drop=True)
+    view["Match"] = view.apply(match_label, axis=1)
 
-    # Orange = several matching leads and nobody has picked/confirmed one yet
-    needs_pick = ((view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked")).to_numpy()
+    # downloads (full detail) in the header
+    full = view[CALL_COLS + LEAD_COLS].copy()
+    export = full.copy()
+    export["Date/Time"] = export["Date/Time"].map(us_time)
+    with dl_slot:
+        d1, d2 = st.columns(2)
+        d1.download_button("CSV", export.to_csv(index=False).encode("utf-8"),
+                           file_name=f"call_report_{start}_{end}.csv", mime="text/csv",
+                           icon=":material/download:", width="stretch")
+        xlsx = to_excel(full)
+        if xlsx:
+            d2.download_button("Download Excel", xlsx, file_name=f"call_report_{start}_{end}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               icon=":material/table_view:", type="primary", width="stretch")
 
-    if len(table) <= 10000:  # colouring very large tables makes the page slow
-        shown = (table.style
-                 .format({"Times Called": "{:d}", "Leads Matched": "{:d}"})
-                 .set_properties(subset=LEAD_COLS, **{"background-color": "rgba(255, 230, 0, 0.12)"})
-                 .map(lambda v: "background-color: rgba(255, 99, 132, 0.25)" if v >= 3 else "",
-                      subset=["Times Called"])
-                 .apply(lambda col: ["background-color: rgba(255, 140, 0, 0.35); font-weight: 600"
-                                     if flag else "" for flag in needs_pick],
-                        subset=["Leads Matched"], axis=0))
-    else:
-        shown = table
+    left, right = st.columns([3.1, 1], gap="medium")
+    with left:
+        n_leads = view.loc[view["Lead Id"] != "Not Found", "Lead Id"].nunique()
+        n_reps = view["From"].nunique()
+        t_all, t_lead, t_rep = st.tabs([f"All calls  {len(view):,}", f"Grouped by lead  {n_leads:,}",
+                                        f"Grouped by rep  {n_reps:,}"])
+        with t_all:
+            show_all = st.toggle("Show all columns", key="all_cols")
+            call_cols = {"Date/Time": "Time", "From": "Rep", "To": "To",
+                         "Duration": "Dur.", "Times Called": "Times"}
+            lead_cols = {"Lead Id": "Lead", "Company In Ad": "Company", "Lead Owner": "Owner",
+                         "Status": "Status", "Match": "Match"}
+            if show_all:
+                call_cols = {"Direction": "Direction", **call_cols, "Ext / ID": "Ext"}
+                lead_cols = {**lead_cols, "Lead Started": "Lead Started", "Last Edited": "Last Edited",
+                             "Lead Source": "Lead Source", "Media Market": "Market",
+                             "Contact Name (phase2)": "Contact", "Phase2 Completed": "Phase2 Completed",
+                             "Matched On": "Matched On", "Leads Matched": "Leads Matched"}
+            table = view[list(call_cols) + list(lead_cols)].rename(columns={**call_cols, **lead_cols})
+            table["To"] = table["To"].map(fmt_phone)
+            lead_names = list(lead_cols.values())
+            widths = {"Time": 128, "Rep": 135, "To": 105, "Dur.": 58, "Times": 56, "Direction": 80, "Ext": 70,
+                      "Lead": 64, "Company": 170, "Owner": 130, "Status": 112, "Match": 108,
+                      "Lead Started": 100, "Last Edited": 140, "Lead Source": 120, "Market": 110,
+                      "Contact": 130, "Phase2 Completed": 140, "Matched On": 170, "Leads Matched": 100}
+            call_w = sum(widths[c] for c in call_cols.values()) + 33  # + row checkbox column
+            lead_w = sum(widths[c] for c in lead_cols.values())
+            st.markdown(f'<div class="halves"><div class="h-call" style="width:{call_w}px">THE CALL</div>'
+                        f'<div class="h-lead" style="width:{lead_w}px">MATCHED MMS LEAD</div></div>',
+                        unsafe_allow_html=True)
+            if len(table) <= 10000:
+                styled = (table.style
+                          .set_properties(subset=lead_names, **{"background-color": "rgba(255, 230, 0, 0.12)"})
+                          .map(lambda v: "background-color: rgba(220, 38, 38, 0.14); color: #b42318; font-weight: 700"
+                               if v >= 3 else "", subset=["Times"])
+                          .map(lambda v: ("background-color: rgba(245, 158, 11, 0.22); color: #8a4b00; font-weight: 700"
+                                          if str(v).startswith("⚑") else
+                                          "color: #127a4a; font-weight: 600" if str(v).startswith("✓") else
+                                          "color: #8a92a3; font-style: italic"), subset=["Match"]))
+                if "Leads Matched" in table.columns:
+                    styled = styled.format({"Leads Matched": "{:d}", "Times": "{:d}"})
+                else:
+                    styled = styled.format({"Times": "{:d}"})
+            else:
+                styled = table
+            event = st.dataframe(
+                styled, key="calls_table", width="stretch", hide_index=True,
+                height=min(40 + 35 * len(table), 600),
+                on_select="rerun", selection_mode="single-row",
+                column_config={
+                    **{c: st.column_config.Column(width=widths[c]) for c in table.columns if c in widths},
+                    "Time": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=widths["Time"]),
+                    "Times": st.column_config.NumberColumn(width=widths["Times"]),
+                    "Match": st.column_config.TextColumn(
+                        width=widths["Match"],
+                        help="✓ = lead confirmed · ⚑ Pick = number matches several leads; "
+                             "click the row, then Change lead")})
+            st.caption(f"{len(view):,} calls · click a row to see its lead on the right")
+        with t_lead:
+            g = view[view["Lead Id"] != "Not Found"].groupby("Lead Id").agg(
+                Company=("Company In Ad", "first"), Owner=("Lead Owner", "first"), Status=("Status", "first"),
+                Source=("Lead Source", "first"), Calls=("To", "size"), Numbers=("To", "nunique"),
+                Reps=("From", lambda s: ", ".join(sorted(set(s.dropna().astype(str))))),
+                Last_call=("Date/Time", "max")).reset_index().sort_values("Calls", ascending=False)
+            g = g.rename(columns={"Lead Id": "Lead", "Last_call": "Last call"})
+            st.dataframe(g, hide_index=True, width="stretch", height=560,
+                         column_config={"Last call": DT_FMT})
+        with t_rep:
+            v2 = view.assign(_secs=view["Duration"].map(dur_seconds),
+                             _out=view["Direction"].fillna("").str.lower().eq("outbound"),
+                             _in=view["Direction"].fillna("").str.lower().eq("inbound"),
+                             _match=view["Lead Id"] != "Not Found",
+                             _needs=(view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked"))
+            g = v2.groupby("From").agg(Calls=("To", "size"), Outbound=("_out", "sum"), Inbound=("_in", "sum"),
+                                       Numbers=("To", "nunique"), Matched=("_match", "mean"),
+                                       Talk=("_secs", "sum"), Needs_pick=("_needs", "sum")).reset_index()
+            g["Matched"] = (g["Matched"] * 100).round(0).astype(int).astype(str) + "%"
+            g["Talk"] = g["Talk"].map(fmt_total)
+            g = g.rename(columns={"From": "Rep", "Talk": "Talk time", "Needs_pick": "Needs pick"}) \
+                 .sort_values("Calls", ascending=False)
+            st.dataframe(g, hide_index=True, width="stretch")
 
-    def _us_time(t):  # 9/30/26 2:58 PM, same as the table (works on Windows too)
-        if pd.isna(t):
-            return ""
-        return f"{t.month}/{t.day}/{t:%y} {t.hour % 12 or 12}:{t:%M} {'AM' if t.hour < 12 else 'PM'}"
-    export = table.copy()
-    export["Date/Time"] = export["Date/Time"].map(_us_time)
-    d1, d2, _ = st.columns([1, 1, 3])
-    xlsx = to_excel(table)
-    if xlsx:
-        d1.download_button("Download Excel", xlsx, file_name=f"call_report_{start}_{end}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           icon=":material/table_view:", type="primary", width="stretch")
-    d2.download_button("Download CSV", export.to_csv(index=False).encode("utf-8"),
-                       file_name=f"call_report_{start}_{end}.csv", mime="text/csv",
-                       icon=":material/download:", width="stretch")
-    if not xlsx:
-        st.caption("To enable the Excel download on this computer, run `pip install openpyxl` once.")
-    st.caption("**Call log** (left) → **MMS lead** (right, shaded). Click a row with **Leads Matched** "
-               "shaded orange to pick which lead it belongs to.")
-    event = st.dataframe(
-        shown, key="calls_table", width="stretch", hide_index=True, height=600,
-        on_select="rerun", selection_mode="single-row",
-        column_config={
-            "Date/Time": DT_FMT,
-            "Times Called": st.column_config.NumberColumn(width="small"),
-            "Leads Matched": st.column_config.NumberColumn(
-                width="small", help="How many MMS leads contain this number. Click the row to pick one."),
-        },
-    )
+    with right:
+        sel = event.selection.rows if event and event.selection else []
+        if sel and sel[0] < len(view):
+            lead_card(view.iloc[sel[0]], df)
+        else:
+            st.markdown('<div class="lc empty"><div class="lc-name">Click a call</div>'
+                        '<div class="lc-meta">Select any row in the table to see its MMS lead here, '
+                        'every call to that number, and to change the lead if it matches several.</div></div>',
+                        unsafe_allow_html=True)
 
-    # ---------- selected row: pick a lead / all calls to that number ----------
-    sel = event.selection.rows if event and event.selection else []
-    st.session_state["pick_current"] = view.iloc[sel[0]]["call_id"] if sel else None
-    if not sel:
-        st.session_state["pick_handled"] = None
-    if st.session_state.pop("suppress_pick", False):
-        st.session_state["pick_handled"] = st.session_state["pick_current"]
-    if (sel and table.iloc[sel[0]]["Leads Matched"] >= 2
-            and st.session_state.get("pick_handled") != st.session_state["pick_current"]):
-        r = table.iloc[sel[0]]
-        pick_lead_dialog(str(r["To"]), str(r["Lead Id"]), str(view.iloc[sel[0]]["Lead Choice"]))
-    if sel:
-        number = table.iloc[sel[0]]["To"]
-        st.subheader(f"All calls to {number} in this date range")
-        st.dataframe(df[df["To"] == number][CALL_COLS + ["Lead Id", "Company In Ad", "Status"]],
-                     hide_index=True, width="stretch", column_config={"Date/Time": DT_FMT})
-    else:
-        st.caption("Tip: click a row to see every call to that number in the date range.")
+
+# =====================================================================================
+# NEEDS REVIEW
+# =====================================================================================
+def page_needs_review():
+    st.title("Needs Review")
+    st.caption("Numbers that match 2 or more MMS leads and still need the right lead picked. "
+               "Once you pick one it drops off this list and every call to that number uses it.")
+    span = st.segmented_control("Called in the last", ["7 days", "30 days", "90 days"], default="30 days",
+                                key="nr_days") or "30 days"
+    days = int(span.split()[0])
+    data = load_needs_review(days)
+    if data.empty:
+        st.success("All caught up — every multi-lead number called in this period has a lead picked.")
+        return
+    # caller names (latest name for each extension / username)
+    c = load_contacts()
+    c = c[c["rep"].fillna("").str.strip() != ""].sort_values("effective_from")
+    names = c.groupby("from_value")["rep"].last().to_dict()
+    data = data.copy()
+    data["Number"] = data["phone10"].map(fmt_phone)
+    data["Called by"] = data["callers"].map(
+        lambda xs: ", ".join(sorted({names.get(x, x) for x in (xs or [])})))
+    data["Last call"] = pd.to_datetime(data["last_call"])
+    table = data[["Number", "calls", "Last call", "Called by", "leads_matched"]].rename(
+        columns={"calls": "Calls", "leads_matched": "Leads matched"})
+
+    kpi_cards([
+        {"label": "Numbers to review", "value": f"{len(data):,}", "note": f"called in the last {days} days",
+         "alert": True},
+        {"label": "Calls affected", "value": f"{int(data['calls'].sum()):,}", "note": "calls to these numbers"},
+        {"label": "Most leads on one number", "value": f"{int(data['leads_matched'].max()):,}",
+         "note": "matching MMS leads"},
+    ])
+    left, right = st.columns([1.7, 2], gap="medium")
+    with left:
+        ev = st.dataframe(table, hide_index=True, width="stretch", height=min(40 + 35 * len(table), 600),
+                          on_select="rerun", selection_mode="single-row", key=f"nr_table_{days}",
+                          column_config={"Last call": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=125),
+                                         "Number": st.column_config.Column(width=105),
+                                         "Calls": st.column_config.NumberColumn(width=55),
+                                         "Leads matched": st.column_config.NumberColumn("Leads", width=55)})
+        st.caption("Sorted by most calls first · click a number to pick its lead")
+    with right:
+        sel = ev.selection.rows if ev and ev.selection else []
+        if not sel:
+            st.markdown('<div class="lc empty"><div class="lc-name">Pick a number</div>'
+                        '<div class="lc-meta">Click a number on the left to see every MMS lead it matches, '
+                        'then choose the right one.</div></div>', unsafe_allow_html=True)
+            return
+        row = data.iloc[sel[0]]
+        st.subheader(f"{row['Number']} · {plural(int(row['leads_matched']), 'matching lead')}")
+        st.caption(f"{plural(int(row['calls']), 'call')} · called by {row['Called by'] or 'unknown'}. "
+                   "Click the right lead, then **Use lead**.")
+        render_pick(str(row["phone10"]), "", "", "nr")
 
 
 # =====================================================================================
@@ -917,11 +1201,19 @@ def page_upload_leads():
 # =====================================================================================
 # NAVIGATION
 # =====================================================================================
+PAGE_LEAD_SEARCH = st.Page(page_lead_search, title="Lead Search", icon=":material/person_search:",
+                           url_path="lead-search")
+try:
+    _review_n = len(load_needs_review(30))
+except Exception:
+    _review_n = 0
 nav = st.navigation({
     "Reports": [
         st.Page(page_call_report, title="Call Report", icon=":material/call:", url_path="call-report",
                 default=True),
-        st.Page(page_lead_search, title="Lead Search", icon=":material/person_search:", url_path="lead-search"),
+        PAGE_LEAD_SEARCH,
+        st.Page(page_needs_review, title=f"Needs Review ({_review_n})" if _review_n else "Needs Review",
+                icon=":material/flag:", url_path="needs-review"),
     ],
     "Manage": [
         st.Page(page_contacts, title="Contacts", icon=":material/contacts:", url_path="contacts"),
@@ -929,4 +1221,28 @@ nav = st.navigation({
         st.Page(page_upload_leads, title="Upload Leads", icon=":material/group_add:", url_path="upload-leads"),
     ],
 })
+
+# Sidebar footer (all pages): how fresh the data is + rarely needed tools
+with st.sidebar:
+    try:
+        fr = load_freshness()
+        last_call = pd.to_datetime(fr.get("last_call")) if fr.get("last_call") else None
+        last_edit = pd.to_datetime(fr.get("last_lead_edit")) if fr.get("last_lead_edit") else None
+        st.markdown(f'''<div class="fresh">Calls through <b>{us_time(last_call) or "—"}</b><br>
+Latest MMS edit <b>{us_time(last_edit) or "—"}</b><br>
+{int(fr.get("total_calls") or 0):,} calls · {int(fr.get("total_leads") or 0):,} leads</div>''',
+                    unsafe_allow_html=True)
+    except Exception:
+        pass
+    with st.expander("Maintenance", icon=":material/build:"):
+        if st.button("Reload data", width="stretch", help="Fetch the latest calls and leads from the database"):
+            st.cache_data.clear()
+            st.rerun()
+        if st.button("Refresh lead matching", width="stretch",
+                     help="Rebuild the phone lookup from all of MMS. Only needed if MMS was changed outside this app."):
+            with st.spinner("Rebuilding phone lookup from MMS..."):
+                sb.rpc("refresh_mms_phone_lookup", {}).execute()
+            st.cache_data.clear()
+            st.rerun()
+
 nav.run()
