@@ -150,6 +150,14 @@ def load_lead_sources() -> list:
     return [r["lead_source"] for r in sb.rpc("lead_source_list", {}).execute().data]
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def load_range_sources(start: date, end: date, started_from=None) -> list:
+    """Lead Sources of the MMS leads that match at least one call in this date range."""
+    return [r["lead_source"] for r in sb.rpc("call_lead_sources", {
+        "p_start": str(start), "p_end": str(end),
+        "p_started_from": str(started_from) if started_from else None}).execute().data]
+
+
 @st.cache_data(ttl=600, show_spinner="Loading calls...")
 def load_calls(start: date, end: date, sources: tuple = (), started_from=None) -> pd.DataFrame:
     """sources / started_from: only match calls to MMS leads with these Lead Sources and/or
@@ -476,9 +484,20 @@ def page_call_report():
         df["Times Called"] = df.groupby("To")["To"].transform("count").astype(int)
         df["Leads Matched"] = pd.to_numeric(df["Leads Matched"], errors="coerce").fillna(0).astype(int)
 
-    reps = load_contacts()["rep"].dropna().astype(str).str.strip()
-    from_options = sorted(set(reps[reps != ""]) | (set(df["From"].dropna().astype(str)) if not df.empty else set()))
+    # Dropdowns only list what exists in the applied date range:
+    # reps who made calls, and Lead Sources of leads matched to those calls.
+    if sources or started_from:
+        base = load_calls(start, end)
+        base = apply_rep_names(base) if not base.empty else base
+    else:
+        base = df
+    from_options = sorted(set(base["From"].dropna().astype(str))) if not base.empty else []
+    try:
+        source_options = load_range_sources(start, end, started_from)
+    except Exception:
+        source_options = load_lead_sources()
     st.session_state["f_from"] = [x for x in (st.session_state.get("f_from") or []) if x in from_options]
+    st.session_state["f_sources"] = [x for x in (st.session_state.get("f_sources") or []) if x in source_options]
 
     # ---------- header ----------
     h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
@@ -493,11 +512,13 @@ def page_call_report():
         r1[0].segmented_control("Dates", DATE_PRESETS, key="f_preset")
         r1[1].date_input("Custom range", key="f_dates", format="MM/DD/YYYY",
                          help="Used when Dates is set to Custom")
-        r1[2].multiselect("Rep", from_options, key="f_from", placeholder="All reps")
+        r1[2].multiselect("Rep", from_options, key="f_from", placeholder="All reps",
+                         help="Lists the reps who made calls in the applied date range.")
         r1[3].segmented_control("Direction", list(DIRECTIONS), key="f_direction")
         r2 = st.columns([2.4, 1.5, 3.0])
-        r2[0].multiselect("Lead Source", load_lead_sources(), key="f_sources", placeholder="All sources",
-                          help="Only match calls to MMS leads from these sources")
+        r2[0].multiselect("Lead Source", source_options, key="f_sources", placeholder="All sources",
+                          help="Only match calls to MMS leads from these sources. Lists the sources "
+                               "found for the applied date range.")
         r2[1].date_input("Lead started from", key="f_started_from", format="MM/DD/YYYY",
                          help="Only match calls to MMS leads started on or after this date")
         r2[2].segmented_control("Show", SHOW_OPTIONS, key="f_show")
@@ -610,7 +631,7 @@ def page_call_report():
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                icon=":material/table_view:", type="primary", width="stretch")
 
-    left, right = st.columns([3.1, 1], gap="medium")
+    left, right = st.columns([3.3, 1], gap="medium")
     with left:
         n_leads = view.loc[view["Lead Id"] != "Not Found", "Lead Id"].nunique()
         n_reps = view["From"].nunique()
@@ -620,20 +641,20 @@ def page_call_report():
             show_all = st.toggle("Show all columns", key="all_cols")
             call_cols = {"Date/Time": "Time", "From": "Rep", "To": "To",
                          "Duration": "Dur.", "Times Called": "Times"}
-            lead_cols = {"Lead Id": "Lead", "Company In Ad": "Company", "Lead Owner": "Owner",
+            lead_cols = {"Lead Id": "Lead", "Lead Source": "Lead Source", "Company In Ad": "Company", "Lead Owner": "Owner",
                          "Status": "Status", "Match": "Match"}
             if show_all:
                 call_cols = {"Direction": "Direction", **call_cols, "Ext / ID": "Ext"}
                 lead_cols = {**lead_cols, "Lead Started": "Lead Started", "Last Edited": "Last Edited",
-                             "Lead Source": "Lead Source", "Media Market": "Market",
+                             "Media Market": "Market",
                              "Contact Name (phase2)": "Contact", "Phase2 Completed": "Phase2 Completed",
                              "Matched On": "Matched On", "Leads Matched": "Leads Matched"}
             table = view[list(call_cols) + list(lead_cols)].rename(columns={**call_cols, **lead_cols})
             table["To"] = table["To"].map(fmt_phone)
             lead_names = list(lead_cols.values())
-            widths = {"Time": 128, "Rep": 135, "To": 105, "Dur.": 58, "Times": 56, "Direction": 80, "Ext": 70,
-                      "Lead": 64, "Company": 170, "Owner": 130, "Status": 112, "Match": 108,
-                      "Lead Started": 100, "Last Edited": 140, "Lead Source": 120, "Market": 110,
+            widths = {"Time": 114, "Rep": 122, "To": 100, "Dur.": 56, "Times": 54, "Direction": 80, "Ext": 70,
+                      "Lead": 72, "Company": 132, "Owner": 120, "Status": 100, "Match": 104,
+                      "Lead Started": 100, "Last Edited": 140, "Lead Source": 102, "Market": 110,
                       "Contact": 130, "Phase2 Completed": 140, "Matched On": 170, "Leads Matched": 100}
             call_w = sum(widths[c] for c in call_cols.values()) + 33  # + row checkbox column
             lead_w = sum(widths[c] for c in lead_cols.values())
