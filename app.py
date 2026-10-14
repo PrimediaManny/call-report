@@ -374,10 +374,11 @@ def _date_range(preset: str, custom):
 def _filter_defaults() -> dict:
     y = date.today() - timedelta(days=1)
     return {"f_preset": "Yesterday", "f_dates": (y, y), "f_from": [], "f_direction": "All",
-            "f_sources": [], "f_started_from": None, "f_show": "All", "f_search": ""}
+            "f_sources": [], "f_started_from": None, "f_show": "All"}
 
 
 FILTER_KEYS = list(_filter_defaults())
+ALL_REPS = "All reps"
 
 
 def _reset_filters():
@@ -385,6 +386,7 @@ def _reset_filters():
     for k, v in defaults.items():
         st.session_state[k] = v
     st.session_state["applied"] = defaults
+    st.session_state["rep_pick"] = ALL_REPS
 
 
 def _apply_filters():
@@ -469,14 +471,12 @@ def page_call_report():
     for k, v in _filter_defaults().items():  # first visit: start every filter at its default
         st.session_state.setdefault(k, v)
     st.session_state.setdefault("applied", _filter_defaults())
-    a = st.session_state["applied"]
+    a = {**_filter_defaults(), **st.session_state["applied"]}
     start, end = _date_range(a["f_preset"], a["f_dates"])
     sources = a["f_sources"] or []
     started_from = a["f_started_from"]
     direction = a["f_direction"] or "All"
-    froms = a["f_from"] or []
     show = a["f_show"] or "All"
-    search = a["f_search"] or ""
 
     df = load_calls(start, end, tuple(sorted(sources)), started_from)
     if not df.empty:
@@ -484,19 +484,11 @@ def page_call_report():
         df["Times Called"] = df.groupby("To")["To"].transform("count").astype(int)
         df["Leads Matched"] = pd.to_numeric(df["Leads Matched"], errors="coerce").fillna(0).astype(int)
 
-    # Dropdowns only list what exists in the applied date range:
-    # reps who made calls, and Lead Sources of leads matched to those calls.
-    if sources or started_from:
-        base = load_calls(start, end)
-        base = apply_rep_names(base) if not base.empty else base
-    else:
-        base = df
-    from_options = sorted(set(base["From"].dropna().astype(str))) if not base.empty else []
+    # Lead Source dropdown only lists sources of leads matched to calls in the applied date range.
     try:
         source_options = load_range_sources(start, end, started_from)
     except Exception:
         source_options = load_lead_sources()
-    st.session_state["f_from"] = [x for x in (st.session_state.get("f_from") or []) if x in from_options]
     st.session_state["f_sources"] = [x for x in (st.session_state.get("f_sources") or []) if x in source_options]
 
     # ---------- header ----------
@@ -508,13 +500,11 @@ def page_call_report():
 
     # ---------- filter bar ----------
     with st.form("call_filters"):
-        r1 = st.columns([2.4, 1.5, 1.8, 1.2])
+        r1 = st.columns([2.4, 1.5, 1.2])
         r1[0].segmented_control("Dates", DATE_PRESETS, key="f_preset")
         r1[1].date_input("Custom range", key="f_dates", format="MM/DD/YYYY",
                          help="Used when Dates is set to Custom")
-        r1[2].multiselect("Rep", from_options, key="f_from", placeholder="All reps",
-                         help="Lists the reps who made calls in the applied date range.")
-        r1[3].segmented_control("Direction", list(DIRECTIONS), key="f_direction")
+        r1[2].segmented_control("Direction", list(DIRECTIONS), key="f_direction")
         r2 = st.columns([2.4, 1.5, 3.0])
         r2[0].multiselect("Lead Source", source_options, key="f_sources", placeholder="All sources",
                           help="Only match calls to MMS leads from these sources. Lists the sources "
@@ -523,14 +513,39 @@ def page_call_report():
                          help="Only match calls to MMS leads started on or after this date")
         r2[2].segmented_control("Show", SHOW_OPTIONS, key="f_show")
         r3 = st.columns([4.6, 1, 1.3], vertical_alignment="bottom")
-        r3[0].text_input("Search", key="f_search", placeholder="Number, company, contact, lead id",
-                         icon=":material/search:")
         r3[1].form_submit_button("Reset", width="stretch", on_click=_reset_filters)
         r3[2].form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
                                  width="stretch", on_click=_apply_filters)
     err = st.session_state.pop("apply_error", None)
     if err:
         st.warning(err)
+
+    # ---------- calls for the applied filters (before picking a rep) ----------
+    pre = df.copy()
+    if not pre.empty:
+        if direction != "All":
+            pre = pre[pre["Direction"].fillna("").str.lower() == DIRECTIONS[direction]]
+        needs_pre = (pre["Leads Matched"] >= 2) & (pre["Lead Choice"] != "Picked")
+        if show == "Matched":
+            pre = pre[pre["Lead Id"] != "Not Found"]
+        elif show == "Not found":
+            pre = pre[pre["Lead Id"] == "Not Found"]
+        elif show == "Needs pick":
+            pre = pre[needs_pre.reindex(pre.index, fill_value=False)]
+
+    # ---------- rep buttons: only reps with calls under the applied filters ----------
+    rep_counts = (pre["From"].dropna().astype(str).value_counts() if not pre.empty
+                  else pd.Series(dtype=int))
+    rep_options = [ALL_REPS] + sorted(rep_counts.index, key=str.lower)
+    if st.session_state.get("rep_pick") not in rep_options:
+        st.session_state["rep_pick"] = ALL_REPS
+    if len(rep_options) > 1:
+        st.pills("Rep", rep_options, key="rep_pick", selection_mode="single",
+                 format_func=lambda r: f"{r}  ·  {len(pre):,}" if r == ALL_REPS
+                 else f"{r}  ·  {int(rep_counts[r]):,}",
+                 help="Reps with calls under the current filters. Click one to show only their calls.")
+    rep_pick = st.session_state.get("rep_pick") or ALL_REPS
+    froms = [] if rep_pick == ALL_REPS else [rep_pick]
 
     # ---------- what's applied ----------
     bits = [", ".join(froms) if froms else "All reps"]
@@ -542,8 +557,6 @@ def page_call_report():
         bits.append(f"Leads started from {started_from:%m/%d/%Y}")
     if show != "All":
         bits.append(show)
-    if search.strip():
-        bits.append(f'Search "{search.strip()}"')
     when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
     bits.append(when)
     st.markdown(f'<div class="applied">Showing <b>{esc(" · ".join(bits))}</b>'
@@ -557,27 +570,7 @@ def page_call_report():
         st.warning("No calls in this date range" + (f" match a lead {lead_filter}." if lead_filter else "."))
         return
 
-    view = df.copy()
-    if direction != "All":
-        view = view[view["Direction"].fillna("").str.lower() == DIRECTIONS[direction]]
-    if froms:
-        view = view[view["From"].astype(str).isin(froms)]
-    needs = (view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked")
-    if show == "Matched":
-        view = view[view["Lead Id"] != "Not Found"]
-    elif show == "Not found":
-        view = view[view["Lead Id"] == "Not Found"]
-    elif show == "Needs pick":
-        view = view[needs.reindex(view.index, fill_value=False)]
-    if search.strip():
-        s = search.strip().lower()
-        s_digits = "".join(ch for ch in s if ch.isdigit())
-        hay = view[["To", "From", "Ext / ID", "Company In Ad", "Contact Name (phase2)", "Lead Id"]].fillna(
-            "").astype(str).apply(lambda c: c.str.lower()).agg(" ".join, axis=1)
-        hit = hay.str.contains(s, regex=False)
-        if len(s_digits) >= 4:
-            hit |= view["To"].astype(str).str.contains(s_digits, regex=False)
-        view = view[hit]
+    view = pre[pre["From"].astype(str).isin(froms)] if froms else pre
 
     # ---------- counters ----------
     secs = view["Duration"].map(dur_seconds)
