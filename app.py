@@ -13,6 +13,7 @@ Contact Phone (phase3), Phase2 Comments. The matching runs inside Supabase (call
 """
 import hmac
 import html
+import re
 import io
 from datetime import date, timedelta
 
@@ -1213,6 +1214,400 @@ def page_upload_leads():
 
 
 # =====================================================================================
+# ATT CALLS + TOLL ROUTING MASTER
+# =====================================================================================
+ATT_COLS = ["ID", "Week", "Connect Date", "Connect Time", "Number", "Toll Dialed", "Routing Number",
+            "Time", "Time(Secs)", "ATT", "State", "Source", "Point To", "Transfer", "Caller"]
+ATT_PHONE_COLS = ["Number", "Toll Dialed", "Routing Number", "Point To"]
+ATT_SHOW = ["All", "Matches master", "Differs", "Not in master"]
+OTHER_STATES = "(Any other state)"
+US_STATES = ["AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN",
+             "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ",
+             "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA",
+             "WI", "WV", "WY", "PR", "VI", "GU", "ON", "QC"]
+
+
+def digits10(v) -> str:
+    """Any phone format -> last 10 digits ('' if not a phone)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    d = re.sub(r"\D", "", re.sub(r"\.0$", "", str(v)))
+    return d[-10:] if len(d) >= 10 else ""
+
+
+@st.cache_data(ttl=600, show_spinner="Loading ATT calls...")
+def load_att() -> pd.DataFrame:
+    rows, start, page = [], 0, 1000
+    while True:
+        data = sb.table("ATT").select("*").order("ID").range(start, start + page - 1).execute().data
+        rows.extend(data)
+        if len(data) < page:
+            break
+        start += page
+    df = pd.DataFrame(rows, columns=ATT_COLS)
+    df["_date"] = pd.to_datetime(df["Connect Date"], format="%m/%d/%Y", errors="coerce").dt.date
+    df["_time"] = pd.to_datetime(df["Connect Time"], format="%H:%M:%S", errors="coerce").dt.time
+    df["_toll"] = df["Toll Dialed"].map(digits10)
+    df["_state"] = df["State"].fillna("").astype(str).str.strip().str.upper()
+    df["_pt"] = df["Point To"].map(digits10)
+    df["_num"] = df["Number"].map(digits10)
+    df["Source"] = df["Source"].fillna("").astype(str).str.strip()
+    return df
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_routing() -> pd.DataFrame:
+    data = sb.table("toll_routing").select("id, toll, state, point_to, effective_from").execute().data
+    out = pd.DataFrame(data, columns=["id", "toll", "state", "point_to", "effective_from"])
+    out["effective_from"] = pd.to_datetime(out["effective_from"]).dt.date
+    out["state"] = out["state"].fillna("")
+    return out
+
+
+def apply_master(df: pd.DataFrame, routing: pd.DataFrame) -> pd.DataFrame:
+    """Adds 'Master Point To' + 'Routing' to each ATT call, using the master rule for its toll + state
+    that was in effect on the call date (falls back to the toll's 'any other state' rule)."""
+    rules = {}
+    for r in routing.sort_values("effective_from").itertuples():
+        rules.setdefault((r.toll, r.state), []).append((r.effective_from, r.point_to))
+
+    def lookup(toll, state, day):
+        for key in ((toll, state), (toll, "")):
+            hits = [pt for eff, pt in rules.get(key, []) if day is None or pd.isna(day) or eff <= day]
+            if hits:
+                return hits[-1]
+        return ""
+
+    df = df.copy()
+    df["_master"] = [lookup(t, s, d) for t, s, d in zip(df["_toll"], df["_state"], df["_date"])]
+    df["Master Point To"] = df["_master"].map(lambda v: fmt_phone(v) if v else "")
+    df["Routing"] = "Not in master"
+    has = df["_master"] != ""
+    df.loc[has & (df["_master"] == df["_pt"]), "Routing"] = "Matches master"
+    df.loc[has & (df["_master"] != df["_pt"]), "Routing"] = "Differs"
+    return df
+
+
+def _att_defaults() -> dict:
+    y = date.today() - timedelta(days=1)
+    return {"a_preset": "Yesterday", "a_dates": (y, y), "a_sources": [], "a_tolls": [], "a_states": [],
+            "a_points": [], "a_show": "All"}
+
+
+def _att_reset():
+    for k, v in _att_defaults().items():
+        st.session_state[k] = v
+    st.session_state["att_applied"] = _att_defaults()
+
+
+def _att_apply():
+    if st.session_state.get("a_preset") == "Custom":
+        custom = st.session_state.get("a_dates")
+        if not isinstance(custom, (list, tuple)) or len(custom) != 2:
+            st.session_state["att_error"] = "Pick both a start and an end date for the custom range."
+            return
+    st.session_state["att_applied"] = {k: st.session_state.get(k) for k in _att_defaults()}
+
+
+def page_att_calls():
+    for k, v in _att_defaults().items():
+        st.session_state.setdefault(k, v)
+    st.session_state.setdefault("att_applied", _att_defaults())
+    a = {**_att_defaults(), **st.session_state["att_applied"]}
+    start, end = _date_range(a["a_preset"], a["a_dates"])
+
+    att = load_att()
+    in_range = att[(att["_date"] >= start) & (att["_date"] <= end)]
+    in_range = apply_master(in_range, load_routing())
+
+    src_opts = sorted(x for x in in_range["Source"].unique() if x)
+    toll_opts = sorted(x for x in in_range["_toll"].unique() if x)
+    state_opts = sorted(x for x in in_range["_state"].unique() if x)
+    pt_opts = sorted(x for x in in_range["_pt"].unique() if x)
+    for key, opts in (("a_sources", src_opts), ("a_tolls", toll_opts), ("a_states", state_opts),
+                      ("a_points", pt_opts)):
+        st.session_state[key] = [x for x in (st.session_state.get(key) or []) if x in opts]
+
+    h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
+    with h1:
+        st.title("ATT Calls")
+        st.caption("Every call from the ATT table. Set filters, then **Apply filters**.")
+    dl_slot = h2.container()
+
+    with st.form("att_filters"):
+        r1 = st.columns([2.4, 1.5, 1.6, 1.6, 1.2])
+        r1[0].segmented_control("Dates", DATE_PRESETS, key="a_preset")
+        r1[1].date_input("Custom range", key="a_dates", format="MM/DD/YYYY",
+                         help="Used when Dates is set to Custom")
+        r1[2].multiselect("Source", src_opts, key="a_sources", placeholder="All sources")
+        r1[3].multiselect("Toll Dialed", toll_opts, key="a_tolls", placeholder="All tolls", format_func=fmt_phone)
+        r1[4].multiselect("State", state_opts, key="a_states", placeholder="All states")
+        r2 = st.columns([2.2, 2.6, 1, 1.3], vertical_alignment="bottom")
+        r2[0].multiselect("Point To", pt_opts, key="a_points", placeholder="All Point To numbers",
+                          format_func=fmt_phone)
+        r2[1].segmented_control("Show", ATT_SHOW, key="a_show",
+                                help="Compare each call's Point To with the Toll Routing master")
+        r2[2].form_submit_button("Reset", width="stretch", on_click=_att_reset)
+        r2[3].form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
+                                 width="stretch", on_click=_att_apply)
+    err = st.session_state.pop("att_error", None)
+    if err:
+        st.warning(err)
+
+    view = in_range
+    if a["a_sources"]:
+        view = view[view["Source"].isin(a["a_sources"])]
+    if a["a_tolls"]:
+        view = view[view["_toll"].isin(a["a_tolls"])]
+    if a["a_states"]:
+        view = view[view["_state"].isin(a["a_states"])]
+    if a["a_points"]:
+        view = view[view["_pt"].isin(a["a_points"])]
+    if (a["a_show"] or "All") != "All":
+        view = view[view["Routing"] == a["a_show"]]
+
+    bits = [", ".join(a["a_sources"]) if a["a_sources"] else "All sources",
+            ", ".join(fmt_phone(x) for x in a["a_tolls"]) if a["a_tolls"] else "All tolls",
+            ", ".join(a["a_states"]) if a["a_states"] else "All states"]
+    if a["a_points"]:
+        bits.append("Point To " + ", ".join(fmt_phone(x) for x in a["a_points"]))
+    if (a["a_show"] or "All") != "All":
+        bits.append(a["a_show"])
+    bits.append(f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}")
+    st.markdown(f'<div class="applied">Showing <b>{esc(" · ".join(bits))}</b></div>', unsafe_allow_html=True)
+
+    secs = pd.to_numeric(view["Time(Secs)"], errors="coerce").fillna(0)
+    uniq = view.loc[view["_num"] != "", "_num"].nunique()
+    per_num = view.loc[view["_num"] != "", "_num"].value_counts()
+    differs = int((view["Routing"] == "Differs").sum())
+    no_rule = int((view["Routing"] == "Not in master").sum())
+    kpi_cards([
+        {"label": "Total calls", "value": f"{len(view):,}", "note": "in the applied filters"},
+        {"label": "Unique numbers", "value": f"{uniq:,}",
+         "note": f"{len(view) / uniq:.1f} calls per number" if uniq else ""},
+        {"label": "Talk time", "value": fmt_total(secs.sum()),
+         "note": f"avg {fmt_short(secs.mean())} per call" if len(view) else ""},
+        {"label": "Tolls dialed", "value": f"{view['_toll'].nunique():,}",
+         "note": f"{view.loc[view['_pt'] != '', '_pt'].nunique():,} Point To numbers used"},
+        {"label": "Called 3+ times", "value": f"{int((per_num >= 3).sum()):,}", "note": "numbers in this range"},
+        {"label": "⚠ Routing differs", "value": f"{differs:,}",
+         "note": f"{no_rule:,} calls on tolls/states not in the master", "alert": differs > 0},
+    ])
+
+    if view.empty:
+        st.info("No ATT calls match these filters." if not in_range.empty
+                else "No ATT calls in this date range.")
+        return
+
+    view = view.sort_values(["_date", "_time"], ascending=False, na_position="last")
+    out = view[ATT_COLS + ["Master Point To", "Routing"]].copy()
+    for c in ATT_PHONE_COLS:
+        out[c] = out[c].map(lambda v: fmt_phone(v) if digits10(v) else ("" if v is None or pd.isna(v) else v))
+
+    with dl_slot:
+        d1, d2 = st.columns(2)
+        d1.download_button("CSV", out.to_csv(index=False).encode("utf-8"),
+                           file_name=f"att_calls_{start}_{end}.csv", mime="text/csv",
+                           icon=":material/download:", width="stretch")
+        xlsx = to_excel(out, sheet="ATT Calls")
+        if xlsx:
+            d2.download_button("Download Excel", xlsx, file_name=f"att_calls_{start}_{end}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               icon=":material/table_view:", type="primary", width="stretch")
+
+    def _routing_style(col):
+        colors = {"Matches master": "color: #2e9e6a", "Differs": "color: #d97706; font-weight: 600",
+                  "Not in master": "opacity: .55"}
+        return [colors.get(v, "") for v in col]
+
+    st.dataframe(out.style.apply(_routing_style, subset=["Routing"]), hide_index=True, width="stretch",
+                 height=620,
+                 column_config={
+                     "ID": st.column_config.NumberColumn(format="%d", width="small"),
+                     "Week": st.column_config.NumberColumn(format="%d", width="small"),
+                     "Time(Secs)": st.column_config.NumberColumn(format="%d"),
+                     "ATT": st.column_config.NumberColumn(format="%d", width="small"),
+                     "Master Point To": st.column_config.TextColumn(
+                         help="Where the Toll Routing master says this toll + state should go"),
+                     "Routing": st.column_config.TextColumn(
+                         help="Matches master · Differs (actual Point To is different) · Not in master"),
+                 })
+    st.caption(f"{plural(len(out), 'call')} · newest first · Toll Routing master rules are managed on the "
+               "**Toll Routing** page")
+
+
+# ---------- Toll Routing (master) ----------
+def _rule_label(state: str) -> str:
+    return state if state else OTHER_STATES
+
+
+@st.dialog("Assign Point To")
+def assign_route_dialog(routing: pd.DataFrame, toll: str):
+    toll_in = st.text_input("Toll Dialed", value=fmt_phone(toll) if toll else "",
+                            help="Pick a toll on the left, or type a new one")
+    states = st.multiselect("States", [OTHER_STATES] + US_STATES, placeholder="Pick one or more states")
+    point_raw = st.text_input("Point To", placeholder="e.g. 847-579-2429")
+    start_day = st.date_input("Starting", value=date.today(), format="MM/DD/YYYY",
+                              help="Calls on or after this date use this Point To")
+    toll10, point10 = digits10(toll_in), digits10(point_raw)
+    keys = ["" if s == OTHER_STATES else s for s in states]
+    if toll10 and keys:
+        cur = routing[routing["toll"] == toll10]
+        notes = []
+        for s in keys:
+            prior = cur[(cur["state"] == s) & (cur["effective_from"] <= start_day)].sort_values("effective_from")
+            if not prior.empty and prior.iloc[-1]["point_to"] != point10:
+                notes.append(f"{_rule_label(s)} now goes to {fmt_phone(prior.iloc[-1]['point_to'])}")
+        if notes:
+            st.info("Handover: " + "; ".join(notes) + f". From {start_day:%m/%d/%Y} on, these will go to the "
+                    "new Point To. Earlier calls keep the old one.")
+    if st.button("Save", type="primary"):
+        if not toll10:
+            st.error("Enter a 10-digit toll number.")
+            return
+        if not keys:
+            st.error("Pick at least one state.")
+            return
+        if not point10:
+            st.error("Enter a 10-digit Point To number.")
+            return
+        cur = routing[(routing["toll"] == toll10) & (routing["effective_from"] == start_day)]
+        clash = cur[cur["state"].isin(keys)]
+        if not clash.empty:
+            lst = ", ".join(f"{_rule_label(r.state)} → {fmt_phone(r.point_to)}" for r in clash.itertuples())
+            st.error(f"These states already have a Point To on this toll starting {start_day:%m/%d/%Y}: {lst}. "
+                     "A state can only go to one Point To at a time. Remove that rule first, "
+                     "or pick a different Starting date.")
+            return
+        sb.table("toll_routing").insert([{"toll": toll10, "state": s or None, "point_to": point10,
+                                          "effective_from": str(start_day)} for s in keys]).execute()
+        st.session_state["route_toll"] = toll10
+        st.cache_data.clear()
+        st.rerun()
+
+
+@st.dialog("Remove routing rules")
+def remove_route_dialog(rows: pd.DataFrame):
+    st.write("Remove these rules from the master? Calls fall back to an earlier rule or "
+             f"the toll's {OTHER_STATES} rule, if there is one.")
+    st.dataframe(rows[["State", "Point To", "Starting"]], hide_index=True, width="stretch")
+    yes, no = st.columns(2)
+    if yes.button("Remove", type="primary", width="stretch"):
+        for row_id in rows["id"]:
+            sb.table("toll_routing").delete().eq("id", int(row_id)).execute()
+        st.cache_data.clear()
+        st.session_state["route_v"] = st.session_state.get("route_v", 0) + 1
+        st.rerun()
+    if no.button("Cancel", width="stretch"):
+        st.session_state["route_v"] = st.session_state.get("route_v", 0) + 1
+        st.rerun()
+
+
+def page_toll_routing():
+    st.title("Toll Routing")
+    st.markdown('<div class="page-sub">Master: which Point To each toll should ring, by state</div>',
+                unsafe_allow_html=True)
+    st.caption("A state can only go to one Point To per toll at a time. Use **Assign Point To** with a later "
+               "Starting date when routing changes; earlier calls keep the old Point To. "
+               f"{OTHER_STATES} covers any state not listed for that toll (and calls with no state).")
+    routing = load_routing()
+    att = apply_master(load_att(), routing)
+
+    # ---------- toll list ----------
+    calls_per_toll = att.groupby("_toll").size()
+    differs_per_toll = att[att["Routing"] == "Differs"].groupby("_toll").size()
+    tolls = sorted(set(routing["toll"]) | set(t for t in calls_per_toll.index if t))
+    tl = pd.DataFrame({
+        "toll": tolls,
+        "Toll": [fmt_phone(t) for t in tolls],
+        "Point Tos": [routing.loc[routing["toll"] == t, "point_to"].nunique() or None for t in tolls],
+        "States": [int((routing["toll"] == t).sum()) or None for t in tolls],
+        "Calls": [int(calls_per_toll.get(t, 0)) for t in tolls],
+        "Differs": [int(differs_per_toll.get(t, 0)) or None for t in tolls],
+    })
+
+    left, right = st.columns([1.25, 2.6], gap="large")
+    with left:
+        st.markdown("**Tolls**")
+        find = st.text_input("Find a toll", placeholder="Type part of a toll number", label_visibility="collapsed",
+                             icon=":material/search:")
+        if find.strip():
+            tl = tl[tl["toll"].str.contains(re.sub(r"\D", "", find), regex=False)]
+        tl = tl.reset_index(drop=True)
+        ev = st.dataframe(tl, hide_index=True, width="stretch", height=560, on_select="rerun",
+                          selection_mode="single-row", key=f"toll_list_{find}",
+                          column_order=["Toll", "Point Tos", "States", "Calls", "Differs"],
+                          column_config={"Point Tos": st.column_config.NumberColumn(help="Point To numbers in the master"),
+                                         "States": st.column_config.NumberColumn(help="State rules in the master (blank = none yet)"),
+                                         "Calls": st.column_config.NumberColumn(help="All ATT calls to this toll"),
+                                         "Differs": st.column_config.NumberColumn(help="Calls whose Point To doesn't match the master")})
+        sel = ev.selection.rows if ev and ev.selection else []
+        if sel:
+            st.session_state["route_toll"] = tl.iloc[sel[0]]["toll"]
+        st.caption(f"{len(routing):,} rules · {routing['toll'].nunique()} tolls in the master")
+
+    toll = st.session_state.get("route_toll") or (tl.iloc[0]["toll"] if not tl.empty else "")
+    with right:
+        top = st.columns([3, 1.3], vertical_alignment="center")
+        tcalls = att[att["_toll"] == toll]
+        srcs = ", ".join(sorted(x for x in tcalls["Source"].unique() if x))
+        top[0].markdown(f"### {fmt_phone(toll) if toll else 'Pick a toll'}"
+                        + (f"  \n<span style='opacity:.6'>{esc(srcs)} · {len(tcalls):,} calls</span>" if toll else ""),
+                        unsafe_allow_html=True)
+        if top[1].button("Assign Point To", icon=":material/alt_route:", type="primary", width="stretch"):
+            assign_route_dialog(routing, toll)
+        if not toll:
+            return
+
+        rules = routing[routing["toll"] == toll].copy()
+        if rules.empty:
+            st.info("This toll isn't in the master yet. Use **Assign Point To** to add its states.")
+        else:
+            # summary: one line per Point To + Starting date
+            covered = tcalls.groupby("_master").size()
+            grp = (rules.assign(lbl=rules["state"].map(_rule_label))
+                   .groupby(["point_to", "effective_from"])["lbl"]
+                   .apply(lambda s: sorted(s, key=lambda x: (x == OTHER_STATES, x))).reset_index())
+            summary = pd.DataFrame({
+                "States": grp["lbl"].map(lambda xs: "  ".join(xs)),
+                "Point To": grp["point_to"].map(fmt_phone),
+                "Starting": grp["effective_from"].map(lambda d: "Beginning" if d == BASE_DATE else f"{d:%m/%d/%Y}"),
+                "# States": grp["lbl"].map(len),
+                "Calls routed": grp["point_to"].map(lambda p: int(covered.get(p, 0))),
+            }).sort_values(["Point To", "Starting"])
+            st.markdown("**Routing by Point To**")
+            st.dataframe(summary, hide_index=True, width="stretch",
+                         column_config={"States": st.column_config.TextColumn(width="large"),
+                                        "Calls routed": st.column_config.NumberColumn(
+                                            help="ATT calls on this toll the master sends to this Point To")})
+
+            st.markdown("**Rules by state**")
+            detail = pd.DataFrame({
+                "id": rules["id"],
+                "State": rules["state"].map(_rule_label),
+                "Point To": rules["point_to"].map(fmt_phone),
+                "Starting": rules["effective_from"].map(lambda d: "Beginning" if d == BASE_DATE else f"{d:%m/%d/%Y}"),
+                "_s": rules["state"].replace("", "~"), "_e": rules["effective_from"],
+                "Remove": False,
+            }).sort_values(["_s", "_e"]).drop(columns=["_s", "_e"])
+            edited = st.data_editor(detail, hide_index=True, width="stretch", height=320, num_rows="fixed",
+                                    key=f"route_editor_{toll}_{st.session_state.get('route_v', 0)}",
+                                    column_order=["State", "Point To", "Starting", "Remove"],
+                                    disabled=["State", "Point To", "Starting"],
+                                    column_config={"Remove": st.column_config.CheckboxColumn(width="small")})
+            to_remove = edited[edited["Remove"]]
+            if not to_remove.empty and st.button(f"Remove {len(to_remove)} selected", icon=":material/delete:"):
+                remove_route_dialog(to_remove)
+
+        # calls on this toll whose state has no rule and no catch-all
+        missing = tcalls[tcalls["Routing"] == "Not in master"]
+        if not missing.empty:
+            st.warning("Calls on this toll from states with no rule: "
+                       + ", ".join(f"{s or '(blank)'} ({n})" for s, n in
+                                   missing["_state"].value_counts().items()))
+
+
+# =====================================================================================
 # NAVIGATION
 # =====================================================================================
 PAGE_LEAD_SEARCH = st.Page(page_lead_search, title="Lead Search", icon=":material/person_search:",
@@ -1225,12 +1620,14 @@ nav = st.navigation({
     "Reports": [
         st.Page(page_call_report, title="Call Report", icon=":material/call:", url_path="call-report",
                 default=True),
+        st.Page(page_att_calls, title="ATT Calls", icon=":material/phone_in_talk:", url_path="att-calls"),
         PAGE_LEAD_SEARCH,
         st.Page(page_needs_review, title=f"Needs Review ({_review_n})" if _review_n else "Needs Review",
                 icon=":material/flag:", url_path="needs-review"),
     ],
     "Manage": [
         st.Page(page_contacts, title="Contacts", icon=":material/contacts:", url_path="contacts"),
+        st.Page(page_toll_routing, title="Toll Routing", icon=":material/alt_route:", url_path="toll-routing"),
         st.Page(page_upload_calls, title="Upload Calls", icon=":material/upload_file:", url_path="upload-calls"),
         st.Page(page_upload_leads, title="Upload Leads", icon=":material/group_add:", url_path="upload-leads"),
     ],
