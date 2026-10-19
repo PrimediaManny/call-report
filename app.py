@@ -1368,14 +1368,23 @@ def digits10(v) -> str:
 
 
 @st.cache_data(ttl=600, show_spinner="Loading ATT calls...")
-def load_att() -> pd.DataFrame:
-    rows, start, page = [], 0, 1000
-    while True:
-        data = sb.table("ATT").select("*").order("ID").range(start, start + page - 1).execute().data
-        rows.extend(data)
-        if len(data) < page:
-            break
-        start += page
+def load_att(start: date = None, end: date = None) -> pd.DataFrame:
+    """ATT calls between start and end (inclusive). Connect Date is stored as text (10/9/2026),
+    so the dates in the range are listed and fetched in chunks."""
+    end = end or date.today()
+    start = start or (end - timedelta(days=89))
+    days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = []
+    for i in range(0, len(days), 31):
+        chunk = [f"{d.month}/{d.day}/{d.year}" for d in days[i:i + 31]]
+        offset = 0
+        while True:
+            data = (sb.table("ATT").select("*").in_("Connect Date", chunk).order("ID")
+                    .range(offset, offset + 999).execute().data)
+            rows.extend(data)
+            if len(data) < 1000:
+                break
+            offset += 1000
     df = pd.DataFrame(rows, columns=ATT_COLS)
     df["_date"] = pd.to_datetime(df["Connect Date"], format="%m/%d/%Y", errors="coerce").dt.date
     df["_time"] = pd.to_datetime(df["Connect Time"], format="%H:%M:%S", errors="coerce").dt.time
@@ -1394,6 +1403,39 @@ def load_routing() -> pd.DataFrame:
     out["effective_from"] = pd.to_datetime(out["effective_from"]).dt.date
     out["state"] = out["state"].fillna("")
     return out
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_toll_sources() -> pd.DataFrame:
+    data = sb.table("toll_sources").select("id, toll, source, group_name, effective_from").execute().data
+    out = pd.DataFrame(data, columns=["id", "toll", "source", "group_name", "effective_from"])
+    out["effective_from"] = pd.to_datetime(out["effective_from"]).dt.date
+    return out
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_att_file_log() -> pd.DataFrame:
+    data = (sb.table("att_file_log").select("*").order("loaded_at", desc=True).limit(500).execute().data)
+    return pd.DataFrame(data, columns=["file_name", "file_size", "call_date", "status", "rows_in_file",
+                                       "rows_added", "rows_already_there", "message", "loaded_at"])
+
+
+NO_GROUP = "Not in a group"
+
+
+def apply_groups(df: pd.DataFrame, srcs: pd.DataFrame) -> pd.DataFrame:
+    """Adds 'Group' (e.g. USA Vein) to each call from the Toll Sources master, as of the call date."""
+    rules = {}
+    for r in srcs.sort_values("effective_from").itertuples():
+        rules.setdefault(r.toll, []).append((r.effective_from, r.group_name or ""))
+
+    def lookup(toll, day):
+        hits = [g for eff, g in rules.get(toll, []) if day is None or pd.isna(day) or eff <= day]
+        return hits[-1] if hits else ""
+
+    df = df.copy()
+    df["Group"] = [lookup(t, d) or NO_GROUP for t, d in zip(df["_toll"], df["_date"])]
+    return df
 
 
 def apply_master(df: pd.DataFrame, routing: pd.DataFrame) -> pd.DataFrame:
@@ -1423,7 +1465,7 @@ def apply_master(df: pd.DataFrame, routing: pd.DataFrame) -> pd.DataFrame:
 def _att_defaults() -> dict:
     y = date.today() - timedelta(days=1)
     return {"a_preset": "Yesterday", "a_dates": (y, y), "a_sources": [], "a_tolls": [], "a_states": [],
-            "a_points": [], "a_show": "All"}
+            "a_points": [], "a_show": "All", "a_group": "All tolls"}
 
 
 def _att_reset():
@@ -1448,9 +1490,14 @@ def page_att_calls():
     a = {**_att_defaults(), **st.session_state["att_applied"]}
     start, end = _date_range(a["a_preset"], a["a_dates"])
 
-    att = load_att()
+    att = load_att(start, end)
     in_range = att[(att["_date"] >= start) & (att["_date"] <= end)]
     in_range = apply_master(in_range, load_routing())
+    srcs = load_toll_sources()
+    in_range = apply_groups(in_range, srcs)
+    group_opts = ["All tolls"] + sorted(g for g in srcs["group_name"].dropna().unique() if g) + [NO_GROUP]
+    if st.session_state.get("a_group") not in group_opts:
+        st.session_state["a_group"] = "All tolls"
 
     src_opts = sorted(x for x in in_range["Source"].unique() if x)
     toll_opts = sorted(x for x in in_range["_toll"].unique() if x)
@@ -1474,19 +1521,23 @@ def page_att_calls():
         r1[2].multiselect("Source", src_opts, key="a_sources", placeholder="All sources")
         r1[3].multiselect("Toll Dialed", toll_opts, key="a_tolls", placeholder="All tolls", format_func=fmt_phone)
         r1[4].multiselect("State", state_opts, key="a_states", placeholder="All states")
-        r2 = st.columns([2.2, 2.6, 1, 1.3], vertical_alignment="bottom")
-        r2[0].multiselect("Point To", pt_opts, key="a_points", placeholder="All Point To numbers",
+        r2 = st.columns([1.9, 2.0, 2.6, 1, 1.3], vertical_alignment="bottom")
+        r2[0].segmented_control("Tolls", group_opts, key="a_group",
+                                help="USA Vein = every toll in the Toll Sources master's USA Vein group")
+        r2[1].multiselect("Point To", pt_opts, key="a_points", placeholder="All Point To numbers",
                           format_func=fmt_phone)
-        r2[1].segmented_control("Show", ATT_SHOW, key="a_show",
+        r2[2].segmented_control("Show", ATT_SHOW, key="a_show",
                                 help="Compare each call's Point To with the Toll Routing master")
-        r2[2].form_submit_button("Reset", width="stretch", on_click=_att_reset)
-        r2[3].form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
+        r2[3].form_submit_button("Reset", width="stretch", on_click=_att_reset)
+        r2[4].form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
                                  width="stretch", on_click=_att_apply)
     err = st.session_state.pop("att_error", None)
     if err:
         st.warning(err)
 
     view = in_range
+    if (a["a_group"] or "All tolls") != "All tolls":
+        view = view[view["Group"] == a["a_group"]]
     if a["a_sources"]:
         view = view[view["Source"].isin(a["a_sources"])]
     if a["a_tolls"]:
@@ -1498,7 +1549,8 @@ def page_att_calls():
     if (a["a_show"] or "All") != "All":
         view = view[view["Routing"] == a["a_show"]]
 
-    bits = [", ".join(a["a_sources"]) if a["a_sources"] else "All sources",
+    bits = [a["a_group"] or "All tolls",
+            ", ".join(a["a_sources"]) if a["a_sources"] else "All sources",
             ", ".join(fmt_phone(x) for x in a["a_tolls"]) if a["a_tolls"] else "All tolls",
             ", ".join(a["a_states"]) if a["a_states"] else "All states"]
     if a["a_points"]:
@@ -1532,7 +1584,7 @@ def page_att_calls():
         return
 
     view = view.sort_values(["_date", "_time"], ascending=False, na_position="last")
-    out = view[ATT_COLS + ["Master Point To", "Routing"]].copy()
+    out = view[ATT_COLS + ["Group", "Master Point To", "Routing"]].copy()
     for c in ATT_PHONE_COLS:
         out[c] = out[c].map(lambda v: fmt_phone(v) if digits10(v) else ("" if v is None or pd.isna(v) else v))
 
@@ -1564,8 +1616,32 @@ def page_att_calls():
                      "Routing": st.column_config.TextColumn(
                          help="Matches master · Differs (actual Point To is different) · Not in master"),
                  })
-    st.caption(f"{plural(len(out), 'call')} · newest first · Toll Routing master rules are managed on the "
-               "**Toll Routing** page")
+    st.caption(f"{plural(len(out), 'call')} · newest first · Point To rules are on the **Toll Routing** page, "
+               "Source and group on the **Toll Sources** page")
+    att_file_log_panel()
+
+
+def att_file_log_panel():
+    flog = load_att_file_log()
+    with st.expander("AT&T files loaded automatically", icon=":material/folder_open:"):
+        if flog.empty:
+            st.info("No AT&T files have been loaded yet. The loader on your PC adds new files from the "
+                    "AT&T Exports folder and records each one here, so a file is never loaded twice.")
+            return
+        loaded = flog[flog["status"] == "loaded"]
+        errors = flog[flog["status"] == "error"]
+        last = pd.to_datetime(flog["loaded_at"]).max()
+        st.caption(f"{len(loaded):,} files loaded · {int(loaded['rows_added'].fillna(0).sum()):,} calls added · "
+                   f"last run {us_time(last.tz_convert('America/Chicago')) if last is not pd.NaT else '—'}"
+                   + (f" · ⚠ {len(errors)} file(s) had errors" if len(errors) else ""))
+        show = flog[flog["status"].isin(["loaded", "error"])].copy()
+        show["Call date"] = pd.to_datetime(show["call_date"]).dt.strftime("%m/%d/%Y")
+        show["Loaded"] = pd.to_datetime(show["loaded_at"]).dt.tz_convert("America/Chicago").map(us_time)
+        show = show.rename(columns={"file_name": "File", "status": "Status", "rows_in_file": "Calls in file",
+                                    "rows_added": "Added", "rows_already_there": "Already there",
+                                    "message": "Error"})
+        st.dataframe(show[["Call date", "File", "Status", "Calls in file", "Added", "Already there", "Loaded",
+                           "Error"]].head(60), hide_index=True, width="stretch")
 
 
 # ---------- Toll Routing (master) ----------
@@ -1643,7 +1719,7 @@ def page_toll_routing():
                "Starting date when routing changes; earlier calls keep the old Point To. "
                f"{OTHER_STATES} covers any state not listed for that toll (and calls with no state).")
     routing = load_routing()
-    att = apply_master(load_att(), routing)
+    att = apply_master(load_att(), routing)   # last 90 days
 
     # ---------- toll list ----------
     calls_per_toll = att.groupby("_toll").size()
@@ -1671,7 +1747,7 @@ def page_toll_routing():
                           column_order=["Toll", "Point Tos", "States", "Calls", "Differs"],
                           column_config={"Point Tos": st.column_config.NumberColumn(help="Point To numbers in the master"),
                                          "States": st.column_config.NumberColumn(help="State rules in the master (blank = none yet)"),
-                                         "Calls": st.column_config.NumberColumn(help="All ATT calls to this toll"),
+                                         "Calls": st.column_config.NumberColumn(help="ATT calls to this toll in the last 90 days"),
                                          "Differs": st.column_config.NumberColumn(help="Calls whose Point To doesn't match the master")})
         sel = ev.selection.rows if ev and ev.selection else []
         if sel:
@@ -1739,6 +1815,174 @@ def page_toll_routing():
                                    missing["_state"].value_counts().items()))
 
 
+# ---------- Toll Sources (master: which Source + group each toll belongs to) ----------
+def _starting_label(d) -> str:
+    return "Beginning" if d == BASE_DATE else f"{d:%m/%d/%Y}"
+
+
+def _refresh_sources(toll: str):
+    """Rewrite the stored Source on this toll's ATT calls from the master."""
+    try:
+        sb.rpc("refresh_att_source", {"p_toll": toll}).execute()
+    except Exception as e:
+        st.warning(f"Saved, but updating existing ATT calls for {fmt_phone(toll)} failed: {e}")
+
+
+@st.dialog("Assign New")
+def assign_source_dialog(srcs: pd.DataFrame):
+    existing = sorted(srcs["toll"].unique())
+    mode = st.radio("Toll", ["Existing toll", "New toll"], horizontal=True, label_visibility="collapsed")
+    if mode == "Existing toll" and existing:
+        cur = srcs.sort_values("effective_from").groupby("toll").tail(1).set_index("toll")
+        toll = st.selectbox("Toll", existing, format_func=lambda t: f"{fmt_phone(t)} — {cur.at[t, 'source'] or '(no source)'}"
+                                                                 f" · {cur.at[t, 'group_name'] or NO_GROUP}")
+    else:
+        toll = digits10(st.text_input("Toll", placeholder="e.g. 800-905-6880"))
+    src_opts = sorted(x for x in srcs["source"].dropna().unique() if x)
+    pick = st.selectbox("Source", src_opts + ["+ New source…"], index=None, placeholder="Pick a source")
+    source = st.text_input("New source name").strip() if pick == "+ New source…" else (pick or "")
+    grp_opts = sorted(x for x in srcs["group_name"].dropna().unique() if x)
+    gpick = st.selectbox("Group", grp_opts + [NO_GROUP, "+ New group…"],
+                         index=grp_opts.index("USA Vein") if "USA Vein" in grp_opts else 0)
+    group = st.text_input("New group name").strip() if gpick == "+ New group…" else (
+        "" if gpick == NO_GROUP else gpick)
+    start_day = st.date_input("Starting", value=date.today(), format="MM/DD/YYYY",
+                              help="Calls on or after this date use this Source and group")
+    if toll:
+        st.caption(f"Calls to {fmt_phone(toll)} on or after {start_day:%m/%d/%Y} will show this Source and group. "
+                   "Earlier calls keep their current values.")
+    if st.button("Save", type="primary"):
+        if len(toll) != 10:
+            st.error("Enter a 10-digit toll number.")
+            return
+        if not source and not group:
+            st.error("Pick a Source or a group.")
+            return
+        clash = srcs[(srcs["toll"] == toll) & (srcs["effective_from"] == start_day)]
+        if not clash.empty:
+            st.error(f"{fmt_phone(toll)} already has an assignment starting {start_day:%m/%d/%Y}. "
+                     "Edit it in the table instead, or pick another date.")
+            return
+        sb.table("toll_sources").insert({"toll": toll, "source": source or None, "group_name": group or None,
+                                         "effective_from": str(start_day)}).execute()
+        _refresh_sources(toll)
+        st.cache_data.clear()
+        st.session_state["src_v"] = st.session_state.get("src_v", 0) + 1
+        st.rerun()
+
+
+@st.dialog("Confirm change")
+def edit_source_dialog(row_id: int, toll: str, field: str, old: str, new: str):
+    label = "Source" if field == "source" else "group"
+    st.write(f'Change the {label} of **{fmt_phone(toll)}** from **"{old or "(blank)"}"** to **"{new or "(blank)"}"**?')
+    st.caption("This updates that assignment, including calls already loaded for its dates.")
+    yes, no = st.columns(2)
+    if yes.button("Yes", type="primary", width="stretch"):
+        sb.table("toll_sources").update({field: new or None}).eq("id", row_id).execute()
+        if field == "source":
+            _refresh_sources(toll)
+        st.cache_data.clear()
+        st.session_state["src_v"] = st.session_state.get("src_v", 0) + 1
+        st.rerun()
+    if no.button("Cancel", width="stretch"):
+        st.session_state["src_v"] = st.session_state.get("src_v", 0) + 1
+        st.rerun()
+
+
+@st.dialog("Remove assignments")
+def remove_source_dialog(rows: pd.DataFrame):
+    st.write("Remove these assignments? Their calls go back to the toll's previous assignment, "
+             "or to a blank Source if there isn't one.")
+    st.dataframe(rows[["Toll", "Source", "Group", "Starting"]], hide_index=True, width="stretch")
+    yes, no = st.columns(2)
+    if yes.button("Remove", type="primary", width="stretch"):
+        for r in rows.itertuples():
+            sb.table("toll_sources").delete().eq("id", int(r.id)).execute()
+        for toll in rows["toll"].unique():
+            _refresh_sources(toll)
+        st.cache_data.clear()
+        st.session_state["src_v"] = st.session_state.get("src_v", 0) + 1
+        st.rerun()
+    if no.button("Cancel", width="stretch"):
+        st.session_state["src_v"] = st.session_state.get("src_v", 0) + 1
+        st.rerun()
+
+
+def page_toll_sources():
+    st.title("Toll Sources")
+    st.markdown('<div class="page-sub">Which Source and group each toll belongs to</div>', unsafe_allow_html=True)
+    st.caption("Edit a Source or group and press Enter to change it. Use **Assign New** when a toll moves to a "
+               "different Source or group: calls from the Starting date on use the new values, earlier calls "
+               "keep the old ones. Tolls in the **USA Vein** group make up the USA Vein filter on ATT Calls.")
+    srcs = load_toll_sources()
+    c1, c2, c3 = st.columns([1, 2.2, 1.4])
+    if c1.button("Assign New", icon=":material/add_link:", type="primary", width="stretch"):
+        assign_source_dialog(srcs)
+    find = c2.text_input("Find", placeholder="Type a toll, source or group", label_visibility="collapsed",
+                         icon=":material/search:")
+    grp_opts = ["All groups"] + sorted(x for x in srcs["group_name"].dropna().unique() if x) + [NO_GROUP]
+    grp = c3.selectbox("Group", grp_opts, label_visibility="collapsed")
+
+    shown = pd.DataFrame({
+        "id": srcs["id"], "toll": srcs["toll"],
+        "Toll": srcs["toll"].map(fmt_phone),
+        "Source": srcs["source"].fillna(""),
+        "Group": srcs["group_name"].fillna(""),
+        "Starting": srcs["effective_from"].map(_starting_label),
+        "_e": srcs["effective_from"],
+        "Remove": False,
+    }).sort_values(["Group", "Source", "toll", "_e"]).drop(columns="_e").reset_index(drop=True)
+    if grp == NO_GROUP:
+        shown = shown[shown["Group"] == ""]
+    elif grp != "All groups":
+        shown = shown[shown["Group"] == grp]
+    if find.strip():
+        f = find.strip().lower()
+        fd = re.sub(r"\D", "", f)
+        hit = shown["Source"].str.lower().str.contains(f, regex=False) | shown["Group"].str.lower().str.contains(f, regex=False)
+        if fd:
+            hit |= shown["toll"].str.contains(fd, regex=False)
+        shown = shown[hit]
+
+    edited = st.data_editor(
+        shown, hide_index=True, width="stretch", height=560, num_rows="fixed",
+        key=f"src_editor_{st.session_state.get('src_v', 0)}_{grp}_{find}",
+        column_order=["Toll", "Source", "Group", "Starting", "Remove"],
+        disabled=["Toll", "Starting"],
+        column_config={"Source": st.column_config.TextColumn(help="Edit and press Enter"),
+                       "Group": st.column_config.TextColumn(help="e.g. USA Vein. Edit and press Enter"),
+                       "Starting": st.column_config.TextColumn(help="Calls on or after this date use this row"),
+                       "Remove": st.column_config.CheckboxColumn(width="small")})
+    n_tolls = srcs["toll"].nunique()
+    n_vein = srcs.loc[srcs["group_name"] == "USA Vein", "toll"].nunique()
+    st.caption(f"{len(srcs)} assignments · {n_tolls} tolls · {n_vein} in USA Vein")
+
+    for field, col in (("source", "Source"), ("group_name", "Group")):
+        changed = edited[edited[col].fillna("").str.strip() != shown[col].fillna("").str.strip()]
+        if not changed.empty:
+            r = changed.iloc[0]
+            edit_source_dialog(int(r["id"]), r["toll"], field, shown.loc[r.name, col].strip(), str(r[col] or "").strip())
+            break
+    to_remove = edited[edited["Remove"]]
+    if not to_remove.empty and st.button(f"Remove {len(to_remove)} selected", icon=":material/delete:"):
+        remove_source_dialog(to_remove)
+
+    # tolls getting calls that aren't in the master yet
+    recent = load_att()
+    if not recent.empty:
+        missing = recent[~recent["_toll"].isin(set(srcs["toll"])) & (recent["_toll"] != "")]
+        if not missing.empty:
+            with st.expander(f"Tolls receiving calls that aren't in this master ({missing['_toll'].nunique()})",
+                             icon=":material/help:"):
+                st.caption("Last 90 days. Their calls are loaded with a blank Source and aren't in any group. "
+                           "Use Assign New → New toll to add one.")
+                t = (missing.groupby("_toll").agg(Calls=("ID", "size"), Last=("_date", "max")).reset_index()
+                     .sort_values("Calls", ascending=False))
+                t["Toll"] = t["_toll"].map(fmt_phone)
+                t["Last call"] = t["Last"].map(lambda d: f"{d:%m/%d/%Y}" if pd.notna(d) else "")
+                st.dataframe(t[["Toll", "Calls", "Last call"]], hide_index=True, width="stretch")
+
+
 # =====================================================================================
 # NAVIGATION
 # =====================================================================================
@@ -1760,6 +2004,7 @@ nav = st.navigation({
     "Manage": [
         st.Page(page_contacts, title="Contacts", icon=":material/contacts:", url_path="contacts"),
         st.Page(page_toll_routing, title="Toll Routing", icon=":material/alt_route:", url_path="toll-routing"),
+        st.Page(page_toll_sources, title="Toll Sources", icon=":material/sell:", url_path="toll-sources"),
         st.Page(page_upload_calls, title="Upload Calls", icon=":material/upload_file:", url_path="upload-calls"),
         st.Page(page_upload_leads, title="Upload Leads", icon=":material/group_add:", url_path="upload-leads"),
     ],
