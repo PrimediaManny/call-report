@@ -805,10 +805,56 @@ def search_mms(q: str):
     return recs, matched, int(data[0].get("total_found") or len(data))
 
 
+def _edits(a: str, b: str) -> int:
+    """Number of single-letter changes to turn a into b (Levenshtein)."""
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _word_ok(typed: str, word: str, last: bool) -> bool:
+    """A typed word matches a word in the cell: exact, or 1 typo if 4+ letters.
+    The last typed word may be the start of a longer word (net -> network)."""
+    allowed = 0 if len(typed) < 4 else 1
+    if typed == word or (last and word.startswith(typed)):
+        return True
+    if allowed and _edits(typed, word) <= allowed:
+        return True
+    if last and allowed and len(word) > len(typed):
+        return min(_edits(typed, word[:n]) for n in (len(typed) - 1, len(typed), len(typed) + 1)) <= allowed
+    return False
+
+
+def close_phrase_match(query: str, text) -> bool:
+    """True if the typed words appear in the cell next to each other, in the same order,
+    allowing a small typo per word (e.g. 'Advanced Net' -> 'Merchant Advance Network')."""
+    if text is None or (isinstance(text, float) and pd.isna(text)):
+        return False
+    q = re.findall(r"[a-z0-9@.]+", query.lower())
+    w = re.findall(r"[a-z0-9@.]+", str(text).lower())
+    if not q or len(w) < len(q):
+        return False
+    for start in range(len(w) - len(q) + 1):
+        if all(_word_ok(q[k], w[start + k], k == len(q) - 1) for k in range(len(q))):
+            return True
+    return False
+
+
 @st.cache_data(ttl=300, show_spinner="Looking for close matches...")
 def search_mms_close(q: str):
-    """Spelling-tolerant fallback (e.g. 'Advanced Net' finds 'Advance Network')."""
-    data = sb.rpc("search_mms_close", {"p_q": q, "p_limit": 300}).execute().data
+    """Spelling-tolerant fallback: same words, same order, small typos allowed."""
+    data = sb.rpc("search_mms_close", {"p_q": q, "p_limit": 1000}).execute().data or []
+    kept = []
+    for d in data:
+        rec = d["rec"] or {}
+        cols = [c for c in MMS_COLS if c in rec and close_phrase_match(q, rec[c])]
+        if cols:
+            kept.append({**d, "matched_cols": cols})
+    data = kept
     if not data:
         return pd.DataFrame(columns=MMS_COLS), {}, 0
     recs = pd.DataFrame([d["rec"] for d in data])
@@ -870,8 +916,8 @@ def page_lead_search():
         st.warning(f"No leads in MMS match **{q.strip()}**, and nothing is spelled close to it.")
         return
     if close:
-        st.info(f"No exact match for **{q.strip()}**. Showing close spellings instead, best matches first. "
-                "The closest wording in each lead is highlighted.", icon=":material/spellcheck:")
+        st.info(f"No exact match for **{q.strip()}**. Showing close spellings instead: the same words in the "
+                "same order, with a small typo allowed in each word.", icon=":material/spellcheck:")
 
     # which columns matched, and how often
     col_counts = pd.Series([c for cols in matched.values() for c in cols]).value_counts()
