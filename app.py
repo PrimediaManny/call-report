@@ -805,6 +805,22 @@ def search_mms(q: str):
     return recs, matched, int(data[0].get("total_found") or len(data))
 
 
+@st.cache_data(ttl=300, show_spinner="Looking for close matches...")
+def search_mms_close(q: str):
+    """Spelling-tolerant fallback (e.g. 'Advanced Net' finds 'Advance Network')."""
+    data = sb.rpc("search_mms_close", {"p_q": q, "p_limit": 300}).execute().data
+    if not data:
+        return pd.DataFrame(columns=MMS_COLS), {}, 0
+    recs = pd.DataFrame([d["rec"] for d in data])
+    for c in MMS_COLS:
+        if c not in recs.columns:
+            recs[c] = None
+    recs = recs[MMS_COLS]
+    matched = {str(d["lead_id"]): list(d["matched_cols"] or []) for d in data}
+    recs.insert(1, "Matched In", [", ".join(matched.get(str(i), [])) for i in recs["Lead Id"]])
+    return recs, matched, len(data)
+
+
 DETAIL_GROUPS = {
     "Lead": ["Lead Id", "Old Lead Id", "Lead Source", "Lead Rating", "Lead Owner", "Status", "Started By",
              "Lead Started", "Last Edited"],
@@ -846,9 +862,16 @@ def page_lead_search():
         return
 
     results, matched, total = search_mms(q.strip())
+    close = False
+    if results.empty and any(ch.isalpha() for ch in q):
+        results, matched, total = search_mms_close(q.strip())
+        close = not results.empty
     if results.empty:
-        st.warning(f"No leads in MMS match **{q.strip()}**.")
+        st.warning(f"No leads in MMS match **{q.strip()}**, and nothing is spelled close to it.")
         return
+    if close:
+        st.info(f"No exact match for **{q.strip()}**. Showing close spellings instead, best matches first. "
+                "The closest wording in each lead is highlighted.", icon=":material/spellcheck:")
 
     # which columns matched, and how often
     col_counts = pd.Series([c for cols in matched.values() for c in cols]).value_counts()
