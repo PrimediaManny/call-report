@@ -788,6 +788,23 @@ def search_leads(q: str) -> pd.DataFrame:
         "status": "Status"})
 
 
+@st.cache_data(ttl=300, show_spinner="Searching MMS...")
+def search_mms(q: str):
+    """Every MMS lead with the search text in ANY column (phone numbers match in any format).
+    Returns (leads table, {lead id: [matched columns]}, total found)."""
+    data = sb.rpc("search_mms", {"p_q": q, "p_limit": 1000}).execute().data
+    if not data:
+        return pd.DataFrame(columns=MMS_COLS), {}, 0
+    recs = pd.DataFrame([d["rec"] for d in data])
+    for c in MMS_COLS:
+        if c not in recs.columns:
+            recs[c] = None
+    recs = recs[MMS_COLS]
+    matched = {str(d["lead_id"]): list(d["matched_cols"] or []) for d in data}
+    recs.insert(1, "Matched In", [", ".join(matched.get(str(i), [])) for i in recs["Lead Id"]])
+    return recs, matched, int(data[0].get("total_found") or len(data))
+
+
 DETAIL_GROUPS = {
     "Lead": ["Lead Id", "Old Lead Id", "Lead Source", "Lead Rating", "Lead Owner", "Status", "Started By",
              "Lead Started", "Last Edited"],
@@ -803,11 +820,13 @@ DETAIL_GROUPS = {
 }
 
 
-def _field_block(title: str, rec: dict, fields: list):
+def _field_block(title: str, rec: dict, fields: list, hits=()):
     with st.container(border=True):
         st.markdown(f"**{title}**")
+        hl = "background:#e53935;color:#fff;border-radius:4px;padding:1px 5px"
         lines = [f"<span style='opacity:.6'>{f.replace(' (phase2)', '').replace(' (phase3)', '')}</span>"
-                 f"<br>{rec.get(f)}" for f in fields if rec.get(f) not in (None, "")]
+                 f"<br><span style='{hl if f in hits else ''}'>{esc(rec.get(f))}</span>"
+                 for f in fields if rec.get(f) not in (None, "")]
         st.markdown("".join(f"<div style='margin-bottom:.55rem;line-height:1.35'>{l}</div>" for l in lines) or
                     "<span style='opacity:.5'>Nothing recorded</span>", unsafe_allow_html=True)
 
@@ -815,35 +834,79 @@ def _field_block(title: str, rec: dict, fields: list):
 def page_lead_search():
     st.title("Lead Search")
     st.markdown('<div class="page-sub">Search the MMS lead table</div>', unsafe_allow_html=True)
-    st.caption("Look up a Lead Id, a phone number in any format (full or at least 7 digits), "
-               "or part of a company name, contact name or email.")
+    st.caption("Type anything: a Lead Id, a phone number in any format, a name, company, email, market, "
+               "status... Every MMS column is searched and every matching lead is listed. "
+               "Matching cells are highlighted in red.")
     q = st.text_input("Search MMS", key="ls_q", label_visibility="collapsed", icon=":material/search:",
-                      placeholder="e.g. 171876  ·  (702) 727-7777  ·  Athari  ·  name@company.com")
+                      placeholder="e.g. 171876  ·  (702) 727-7777  ·  Merchant Advance  ·  name@company.com")
     if not q.strip():
         return
-    digits = "".join(ch for ch in q if ch.isdigit())
-    has_text = any(ch.isalpha() or ch == "@" for ch in q)
-    if not has_text and 0 < len(digits) < 7 and not q.strip().isdigit():
-        st.info("Enter at least 7 digits to search by phone number.")
-        return
-    if has_text and len(q.strip()) < 2:
+    if len(q.strip()) < 2:
         st.info("Type at least 2 characters.")
         return
 
-    results = search_leads(q.strip())
+    results, matched, total = search_mms(q.strip())
     if results.empty:
         st.warning(f"No leads in MMS match **{q.strip()}**.")
         return
-    note = " (showing the first 300 — refine your search to narrow it down)" if len(results) >= 300 else ""
-    st.caption(f"{plural(len(results), 'lead')} found{note}. Click a lead to see the full record and its calls.")
-    event = st.dataframe(results, hide_index=True, width="stretch", on_select="rerun",
-                         selection_mode="single-row", key=f"ls_table_{q.strip()}",
-                         height=min(38 + 35 * len(results), 420))
+
+    # which columns matched, and how often
+    col_counts = pd.Series([c for cols in matched.values() for c in cols]).value_counts()
+    chips = "".join(f"<span class='mchip'>{esc(c)} <b>{n:,}</b></span>" for c, n in col_counts.items())
+    st.markdown("<style>.mchip{display:inline-block;background:rgba(229,57,53,.12);border:1px solid "
+                "rgba(229,57,53,.45);border-radius:14px;padding:2px 10px;margin:0 6px 6px 0;font-size:.82rem}"
+                "</style>"
+                f"<div style='margin:.2rem 0 .4rem 0'><span style='opacity:.7;margin-right:6px'>Found in:</span>"
+                f"{chips}</div>", unsafe_allow_html=True)
+
+    t1, t2 = st.columns([3, 1.2], vertical_alignment="center")
+    note = (f" Showing the {len(results):,} most recently edited. Type more to narrow it down."
+            if total > len(results) else "")
+    t1.caption(f"**{plural(total, 'lead')}** found.{note} Click a lead to see the full record and its calls.")
+    only_hit_cols = t2.toggle("Only columns with matches", value=False)
+
+    # matched columns come right after "Matched In" so the red cells are visible without scrolling
+    hit_cols = [c for c in MMS_COLS if c in col_counts.index and c != "Lead Id"]
+    keep = ["Lead Id", "Matched In"] + hit_cols
+    if only_hit_cols:
+        keep += [c for c in ["Company In Ad", "Lead Owner", "Status"] if c not in keep]
+    else:
+        keep += [c for c in MMS_COLS if c not in keep]
+    show = results[keep].fillna("")
+
+    hit_css = "background-color: #e53935; color: white; font-weight: 600"
+
+    def _highlight(frame: pd.DataFrame) -> pd.DataFrame:
+        css = pd.DataFrame("", index=frame.index, columns=frame.columns)
+        for i in frame.index:
+            for c in matched.get(str(frame.at[i, "Lead Id"]), []):
+                if c in css.columns:
+                    css.at[i, c] = hit_css
+        return css
+
+    styled = show.reset_index(drop=True).style.apply(_highlight, axis=None)
+    event = st.dataframe(styled, hide_index=True, width="stretch", on_select="rerun",
+                         selection_mode="single-row", key=f"ls_table_{q.strip()}_{only_hit_cols}",
+                         height=min(38 + 35 * len(show), 520),
+                         column_config={"Matched In": st.column_config.TextColumn(width="medium",
+                                        help="The columns where your search was found")})
+    try:
+        buf = io.BytesIO()
+        results.fillna("").reset_index(drop=True).style.apply(_highlight, axis=None).to_excel(
+            buf, index=False, sheet_name="Lead Search", engine="openpyxl")
+        st.download_button("Download results (Excel, highlighted)", buf.getvalue(),
+                           file_name=f"lead_search_{re.sub(r'[^A-Za-z0-9]+', '_', q.strip())[:40]}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           icon=":material/table_view:")
+    except Exception:
+        pass
+
     sel = event.selection.rows if event and event.selection else []
     if not sel and len(results) == 1:
         sel = [0]
     if not sel:
         return
+    results = show.reset_index(drop=True)
 
     lead_id = str(results.iloc[sel[0]]["Lead Id"])
     rec = sb.table("mms").select("*").eq("Lead Id", lead_id).execute().data
@@ -861,7 +924,7 @@ def page_lead_search():
         cols = st.columns(3)
         for i, (title, fields) in enumerate(DETAIL_GROUPS.items()):
             with cols[i % 3]:
-                _field_block(title, rec, fields)
+                _field_block(title, rec, fields, matched.get(lead_id, []))
         if rec.get("Phase2 Comments"):
             with st.container(border=True):
                 st.markdown("**Phase 2 comments**")
