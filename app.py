@@ -2370,7 +2370,7 @@ def _calls_tab():
     teams = load_rep_teams()
     team_opts = [EVERYONE] + sorted(teams)
     if st.session_state.get("cl_team") not in team_opts:
-        st.session_state["cl_team"] = EVERYONE
+        st.session_state["cl_team"] = "Sales Team" if "Sales Team" in teams else EVERYONE
     f = st.columns([3.4, 1.8, 2.6])
     f2 = st.columns([2.4, 2.0, 3.4])
     f[0].segmented_control("Dates", CL_PRESETS, key="cl_preset", on_change=_cl_preset_changed)
@@ -2433,6 +2433,7 @@ def _calls_tab():
     found = view["Lead Id"] != "Not Found"
     table = pd.DataFrame({
         "Date": view["Date/Time"].map(us_time),
+        "Duration": view["Duration"].map(_short_len),
         "Rep": view["From"],
         "Lead ID": view["Lead Id"].where(found, "Not in MMS"),
         "Lead Source": view["Lead Source"].where(found, "").fillna(""),
@@ -2449,6 +2450,7 @@ def _calls_tab():
                           on_select="rerun", selection_mode="single-row",
                           key=f"cl_table_{start}_{end}_{rep}_{team}_{len(table)}",
                           column_config={"Date": st.column_config.TextColumn(width=135),
+                                         "Duration": st.column_config.TextColumn(width="small"),
                                          "Lead ID": st.column_config.TextColumn(width="small"),
                                          "Times Dialed": st.column_config.NumberColumn(
                                              format="%d", width="small",
