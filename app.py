@@ -1662,6 +1662,17 @@ def page_att_calls():
                   "Not in master": "opacity: .55"}
         return [colors.get(v, "") for v in col]
 
+    n_tolls = view.loc[view["_toll"] != "", "_toll"].nunique()
+    tab_calls, tab_tolls = st.tabs([f":material/list: Calls  {len(out):,}",
+                                    f":material/analytics: Toll analysis  {n_tolls:,}"])
+    with tab_tolls:
+        toll_analysis(view, start, end)
+    with tab_calls:
+        _att_calls_table(out, _routing_style)
+    att_file_log_panel()
+
+
+def _att_calls_table(out: pd.DataFrame, _routing_style):
     st.dataframe(out.style.apply(_routing_style, subset=["Routing"]), hide_index=True, width="stretch",
                  height=620,
                  column_config={
@@ -1676,7 +1687,82 @@ def page_att_calls():
                  })
     st.caption(f"{plural(len(out), 'call')} · newest first · Point To rules are on the **Toll Routing** page, "
                "Source and group on the **Toll Sources** page")
-    att_file_log_panel()
+
+
+def toll_report_table(view: pd.DataFrame) -> pd.DataFrame:
+    """One row per toll per broadcast week: Total Calls and Unique Calls (different caller numbers)."""
+    v = view[view["_toll"] != ""].copy()
+    if v.empty:
+        return pd.DataFrame(columns=["Toll", "Week", "Week Of", "Total Calls", "Unique Calls"])
+    v["_mon"] = v["_date"].map(bweek_monday)
+    g = (v.groupby(["_toll", "_mon"])
+         .agg(total=("ID", "size"), uniq=("_num", lambda s: s[s != ""].nunique())).reset_index()
+         .sort_values(["_toll", "_mon"]))
+    rep = pd.DataFrame({
+        "Toll": g["_toll"].map(lambda t: f"({t[:3]}) {t[3:6]}-{t[6:]}"),
+        "Week": g["_mon"].map(lambda m: f"{(m + timedelta(days=6)).year}-{bweek_number(m):02d}"),
+        "Week Of": g["_mon"].map(lambda m: f"{m:%Y-%m-%d}"),
+        "Total Calls": g["total"].astype(int),
+        "Unique Calls": g["uniq"].astype(int),
+    })
+    totals = pd.DataFrame([{"Toll": "TOTALS:", "Week": "", "Week Of": "",
+                            "Total Calls": int(rep["Total Calls"].sum()),
+                            "Unique Calls": int(rep["Unique Calls"].sum())}])
+    return pd.concat([rep, totals], ignore_index=True)
+
+
+def toll_report_excel(rep: pd.DataFrame, title: str):
+    try:
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    except ImportError:
+        return None
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        rep.to_excel(w, index=False, sheet_name="Toll Analysis")
+        ws = w.sheets["Toll Analysis"]
+        head = PatternFill("solid", fgColor="BDD7EE")
+        for c in ws[1]:
+            c.font = Font(bold=True)
+            c.fill = head
+            c.alignment = Alignment(horizontal="center")
+        last = ws.max_row
+        thin = Side(style="thin")
+        for c in ws[last]:
+            c.font = Font(bold=True)
+            c.border = Border(top=thin, bottom=Side(style="double"))
+        for col, width in zip("ABCDE", (17, 10, 12, 12, 13)):
+            ws.column_dimensions[col].width = width
+        ws.freeze_panes = "A2"
+    return buf.getvalue()
+
+
+def toll_analysis(view: pd.DataFrame, start: date, end: date):
+    rep = toll_report_table(view)
+    if len(rep) <= 1:
+        st.info("No calls to report for these filters.")
+        return
+    weeks = rep["Week"].iloc[:-1].nunique()
+    c1, c2 = st.columns([3, 1.2], vertical_alignment="center")
+    c1.caption(f"Calls per toll per broadcast week for the applied filters "
+               f"({start:%m/%d/%Y} – {end:%m/%d/%Y}, {plural(weeks, 'week')}). "
+               "**Unique Calls** = different caller numbers. The TOTALS row adds up each column.")
+    xlsx = toll_report_excel(rep, "Toll Analysis")
+    if xlsx:
+        c2.download_button("Download Excel", xlsx, file_name=f"toll_analysis_{start}_{end}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           icon=":material/table_view:", width="stretch")
+
+    def _bold_total(row):
+        return ["font-weight: 700; border-top: 2px solid #888" if row["Toll"] == "TOTALS:" else ""] * len(row)
+
+    st.dataframe(rep.style.apply(_bold_total, axis=1), hide_index=True, width="content",
+                 height=min(38 + 35 * len(rep), 760),
+                 column_config={"Toll": st.column_config.TextColumn(width="medium"),
+                                "Week": st.column_config.TextColumn(help="Broadcast year-week"),
+                                "Week Of": st.column_config.TextColumn(help="Monday that starts the broadcast week"),
+                                "Total Calls": st.column_config.NumberColumn(format="%d"),
+                                "Unique Calls": st.column_config.NumberColumn(
+                                    format="%d", help="Different caller numbers to this toll that week")})
 
 
 def att_file_log_panel():
