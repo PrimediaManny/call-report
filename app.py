@@ -110,18 +110,27 @@ DT_FMT = st.column_config.DatetimeColumn(format="M/D/YY h:mm A")
 
 
 # ---------- password gate (only active when APP_PASSWORD is set in secrets) ----------
+# APP_PASSWORD    -> full app (role "admin")
+# VIEWER_PASSWORD -> management: read-only Call Log only (role "viewer")
 def password_ok() -> bool:
     try:
-        required = st.secrets.get("APP_PASSWORD")
+        admin_pw = st.secrets.get("APP_PASSWORD")
+        viewer_pw = st.secrets.get("VIEWER_PASSWORD")
     except Exception:
-        required = None
-    if not required or st.session_state.get("authed"):
+        admin_pw = viewer_pw = None
+    if st.session_state.get("authed"):
+        return True
+    if not admin_pw:
+        st.session_state["role"] = "admin"
         return True
     st.title("Call Report")
     pw = st.text_input("Password", type="password")
     if pw:
-        if hmac.compare_digest(pw, str(required)):
-            st.session_state["authed"] = True
+        if hmac.compare_digest(pw, str(admin_pw)):
+            st.session_state.update(authed=True, role="admin")
+            st.rerun()
+        if viewer_pw and hmac.compare_digest(pw, str(viewer_pw)):
+            st.session_state.update(authed=True, role="viewer")
             st.rerun()
         st.error("Incorrect password")
     return False
@@ -2128,8 +2137,237 @@ def page_toll_sources():
 
 
 # =====================================================================================
+# CALL LOG (simple, read-only view for management)
+# =====================================================================================
+CL_PRESETS = ["Yesterday", "This week", "Last week", "This month", "Custom"]
+ALL_REPS_CL = "All reps"
+
+
+def _status_pill(st_text) -> str:
+    if not st_text or (isinstance(st_text, float) and pd.isna(st_text)):
+        return ""
+    s = str(st_text)
+    if s.startswith(("09", "10")):
+        bg, fg = "rgba(19,122,67,.12)", "#137a43"
+    elif s.startswith(("07", "08", "14", "16")):
+        bg, fg = "rgba(217,119,6,.13)", "#a35c00"
+    elif s.startswith(("03", "05", "15")):
+        bg, fg = "rgba(128,128,128,.15)", "inherit"
+    else:
+        bg, fg = "rgba(26,86,196,.12)", "#1a56c4"
+    return (f"<span style='background:{bg};color:{fg};border-radius:6px;padding:2px 8px;font-size:.8rem;"
+            f"font-weight:600'>{esc(s)}</span>")
+
+
+def _short_len(d) -> str:
+    secs = dur_seconds(d)
+    h, rem = divmod(secs, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def _cl_preset_changed():
+    st.session_state["cl_week"] = None
+
+
+def _cl_week_changed():
+    if st.session_state.get("cl_week"):
+        st.session_state["cl_preset"] = None
+
+
+def _cl_range() -> tuple:
+    today = date.today()
+    week = st.session_state.get("cl_week")
+    if week:
+        return week, min(week + timedelta(days=6), today)
+    p = st.session_state.get("cl_preset") or "Yesterday"
+    if p == "This week":
+        return bweek_monday(today), today
+    if p == "Last week":
+        m = bweek_monday(today) - timedelta(days=7)
+        return m, m + timedelta(days=6)
+    if p == "This month":
+        return today.replace(day=1), today
+    if p == "Custom":
+        c = st.session_state.get("cl_custom")
+        if isinstance(c, (list, tuple)) and len(c) == 2:
+            return c[0], c[1]
+        if isinstance(c, (list, tuple)) and len(c) == 1:
+            return c[0], c[0]
+    y = today - timedelta(days=1)
+    return y, y
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def calls_to_lead_in_month(lead_id: str, month_start: date) -> pd.DataFrame:
+    data = sb.rpc("calls_for_lead", {"p_lead_id": lead_id}).execute().data
+    df = pd.DataFrame(data, columns=["direction", "to_number", "from_value", "call_time", "duration", "matched_on"])
+    if df.empty:
+        return df
+    df = df.rename(columns={"direction": "Direction", "to_number": "To", "from_value": "From",
+                            "call_time": "Date/Time", "duration": "Duration"})
+    df["Date/Time"] = pd.to_datetime(df["Date/Time"])
+    nxt = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    df = df[(df["Date/Time"].dt.date >= month_start) & (df["Date/Time"].dt.date < nxt)]
+    return apply_rep_names(df).sort_values("Date/Time", ascending=False) if not df.empty else df
+
+
+def _cl_lead_panel(r, calls: pd.DataFrame):
+    call_day = r["Date/Time"].date() if pd.notna(r["Date/Time"]) else date.today()
+    month_start = call_day.replace(day=1)
+    with st.container(border=True):
+        if r["Lead Id"] == "Not Found":
+            st.markdown(f"<div style='opacity:.6;font-size:.8rem'>NOT IN MMS</div>"
+                        f"<div style='font-size:1.3rem;font-weight:700'>{esc(fmt_phone(r['To']))}</div>",
+                        unsafe_allow_html=True)
+            st.caption("This number isn't on any MMS lead.")
+            same = calls[calls["To"] == r["To"]]
+            hist = same[(same["Date/Time"].dt.date >= month_start)].sort_values("Date/Time", ascending=False)
+            title = f"Calls to this number in {month_start:%B}"
+        else:
+            rec = get_lead(str(r["Lead Id"])) or {}
+            name = rec.get("Company In Ad") or rec.get("Company (phase2)") or r.get("Company In Ad") or ""
+            src = rec.get("Lead Source") or ""
+            st.markdown(f"<div style='opacity:.6;font-size:.78rem;letter-spacing:.04em'>LEAD {esc(r['Lead Id'])}"
+                        f"{' · ' + esc(src.upper()) if src else ''}</div>"
+                        f"<div style='font-size:1.35rem;font-weight:700;line-height:1.25;margin:2px 0 6px'>"
+                        f"{esc(name)}</div>{_status_pill(rec.get('Status'))}", unsafe_allow_html=True)
+
+            def _d(v):
+                try:
+                    x = pd.to_datetime(v)
+                    return f"{x:%b} {x.day}, {x.year}" if v else ""
+                except Exception:
+                    return str(v or "")
+            rows = [("Contact", rec.get("Contact Name (phase2)")),
+                    ("Phone", fmt_phone(rec.get("Contact Phone (phase2)") or rec.get("Phone Number In Ad") or "")),
+                    ("Email", rec.get("Contact Email (phase2)")),
+                    ("Owner", rec.get("Lead Owner")),
+                    ("Market", rec.get("Media Market")),
+                    ("Lead started", _d(rec.get("Lead Started"))),
+                    ("Last edited", _d(rec.get("Last Edited")))]
+            kv = "".join(f"<span>{k}</span><span>{esc(v)}</span>" for k, v in rows if v)
+            st.markdown(f"<style>.clkv span:nth-child(odd){{opacity:.6}}</style><div class='clkv' style='display:grid;"
+                        f"grid-template-columns:105px 1fr;gap:6px 10px;margin:12px 0 4px;font-size:.9rem'>{kv}</div>",
+                        unsafe_allow_html=True)
+            hist = calls_to_lead_in_month(str(r["Lead Id"]), month_start)
+            title = f"Calls to this lead in {month_start:%B}"
+        st.markdown(f"<div style='font-weight:700;margin:12px 0 4px;border-top:1px solid rgba(128,128,128,.2);"
+                    f"padding-top:10px'>{title} · {len(hist)}</div>", unsafe_allow_html=True)
+        if hist.empty:
+            st.caption("No calls.")
+        else:
+            lines = "".join(
+                f"<div style='display:grid;grid-template-columns:1.35fr 1fr .45fr;padding:5px 0;font-size:.85rem;"
+                f"border-bottom:1px dashed rgba(128,128,128,.25)'><span>{us_time(h['Date/Time'])}</span>"
+                f"<span>{esc(h['From'])}</span><span style='opacity:.6;text-align:right'>"
+                f"{esc(_short_len(h['Duration']))}</span></div>"
+                for _, h in hist.head(40).iterrows())
+            st.markdown(lines, unsafe_allow_html=True)
+
+
+def page_call_log():
+    st.session_state.setdefault("cl_preset", "Yesterday")
+    st.session_state.setdefault("cl_week", None)
+    st.session_state.setdefault("cl_sources", [])
+    if st.session_state.get("cl_week") not in [None] + att_week_options():
+        st.session_state["cl_week"] = None
+
+    st.markdown("<h1 style='margin-bottom:0'>Call Log</h1>", unsafe_allow_html=True)
+    st.caption("Every rep call, matched to its MMS lead. Click a call to see the lead.")
+
+    f = st.columns([3.0, 1.7, 2.0, 1.5])
+    f[0].segmented_control("Dates", CL_PRESETS, key="cl_preset", on_change=_cl_preset_changed)
+    f[1].selectbox("Broadcast week", att_week_options(), key="cl_week", index=None, placeholder="Pick a week…",
+                   format_func=bweek_label, on_change=_cl_week_changed)
+    if st.session_state.get("cl_preset") == "Custom" and not st.session_state.get("cl_week"):
+        y = date.today() - timedelta(days=1)
+        st.session_state.setdefault("cl_custom", (y, y))
+        f[3].date_input("Custom dates", key="cl_custom", format="MM/DD/YYYY")
+    start, end = _cl_range()
+
+    calls = load_calls(start, end)
+    if not calls.empty:
+        calls = apply_rep_names(calls)
+    src_opts = sorted(x for x in calls.get("Lead Source", pd.Series(dtype=str)).dropna().unique() if x) \
+        if not calls.empty else []
+    st.session_state["cl_sources"] = [x for x in st.session_state.get("cl_sources", []) if x in src_opts]
+    f[2].multiselect("Lead source", src_opts, key="cl_sources", placeholder="All lead sources")
+
+    when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
+    if st.session_state.get("cl_week") or st.session_state.get("cl_preset") in ("This week", "Last week"):
+        when = f"Week {bweek_number(start)} · {when}"
+    if calls.empty:
+        st.info(f"No calls for {when}.")
+        return
+
+    view = calls
+    if st.session_state["cl_sources"]:
+        view = view[view["Lead Source"].isin(st.session_state["cl_sources"])]
+
+    # rep buttons: only reps with calls in the picked dates / sources
+    counts = view["From"].fillna("").astype(str).value_counts()
+    counts = counts[counts.index != ""]
+    reps = [ALL_REPS_CL] + sorted(counts.index, key=str.lower)
+    if st.session_state.get("cl_rep") not in reps:
+        st.session_state["cl_rep"] = ALL_REPS_CL
+    st.pills("Rep", reps, key="cl_rep", selection_mode="single", label_visibility="collapsed",
+             format_func=lambda r: f"{r}  {len(view):,}" if r == ALL_REPS_CL else f"{r}  {int(counts[r]):,}")
+    rep = st.session_state.get("cl_rep") or ALL_REPS_CL
+    if rep != ALL_REPS_CL:
+        view = view[view["From"].astype(str) == rep]
+
+    secs = view["Duration"].map(dur_seconds)
+    leads = view.loc[view["Lead Id"] != "Not Found", "Lead Id"].nunique()
+    kpi_cards([{"label": "Calls", "value": f"{len(view):,}", "note": when},
+               {"label": "Leads reached", "value": f"{leads:,}", "note": ""},
+               {"label": "Talk time", "value": fmt_total(secs.sum()), "note": ""}])
+    if view.empty:
+        st.info("No calls match these filters.")
+        return
+
+    view = view.sort_values("Date/Time", ascending=False).reset_index(drop=True)
+    found = view["Lead Id"] != "Not Found"
+    table = pd.DataFrame({
+        "Time": view["Date/Time"].map(us_time),
+        "Rep": view["From"],
+        "Lead": view["Company In Ad"].where(found, "Not in MMS").fillna(""),
+        "Contact": view["Contact Name (phase2)"].where(found, "").fillna(""),
+        "Lead source": view["Lead Source"].where(found, "").fillna(""),
+        "Status": view["Status"].where(found, "").fillna(""),
+        "Length": view["Duration"].map(_short_len),
+    })
+
+    left, right = st.columns([2.6, 1], gap="medium")
+    with left:
+        ev = st.dataframe(table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 640),
+                          on_select="rerun", selection_mode="single-row",
+                          key=f"cl_table_{start}_{end}_{rep}_{len(table)}",
+                          column_config={"Time": st.column_config.TextColumn(width="small"),
+                                         "Length": st.column_config.TextColumn(width="small")})
+    sel = ev.selection.rows if ev and ev.selection else []
+    with right:
+        if sel:
+            _cl_lead_panel(view.iloc[sel[0]], calls)
+        else:
+            with st.container(border=True):
+                st.caption("Click a call to see the lead's details and every call to it that month.")
+
+
+# =====================================================================================
 # NAVIGATION
 # =====================================================================================
+PAGE_CALL_LOG = st.Page(page_call_log, title="Call Log", icon=":material/list_alt:", url_path="call-log")
+
+if st.session_state.get("role", "admin") == "viewer":
+    # management: only the Call Log, no sidebar, nothing that changes data
+    st.markdown("<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
+                "[data-testid='stExpandSidebarButton'],[data-testid='stSidebarCollapseButton']"
+                "{display:none !important}</style>", unsafe_allow_html=True)
+    st.navigation([st.Page(page_call_log, title="Call Log", icon=":material/list_alt:", url_path="call-log",
+                           default=True)], position="hidden").run()
+    st.stop()
+
 PAGE_LEAD_SEARCH = st.Page(page_lead_search, title="Lead Search", icon=":material/person_search:",
                            url_path="lead-search")
 try:
@@ -2140,6 +2378,7 @@ nav = st.navigation({
     "Reports": [
         st.Page(page_call_report, title="Call Report", icon=":material/call:", url_path="call-report",
                 default=True),
+        PAGE_CALL_LOG,
         st.Page(page_att_calls, title="ATT Calls", icon=":material/phone_in_talk:", url_path="att-calls"),
         PAGE_LEAD_SEARCH,
         st.Page(page_needs_review, title=f"Needs Review ({_review_n})" if _review_n else "Needs Review",
