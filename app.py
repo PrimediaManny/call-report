@@ -1462,9 +1462,54 @@ def apply_master(df: pd.DataFrame, routing: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+ATT_DATE_PRESETS = ["Yesterday", "This week", "Last week", "Last 7 days", "This month", "Broadcast week", "Custom"]
+ATT_FIRST_WEEK = date(2025, 12, 29)   # broadcast week 1 of 2026 (first day loaded from AT&T)
+
+
+def bweek_monday(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+def bweek_number(d: date) -> int:
+    """Broadcast calendar: weeks run Monday-Sunday; week 1 is the week containing Jan 1."""
+    nxt = bweek_monday(date(d.year + 1, 1, 1))
+    start = nxt if d >= nxt else bweek_monday(date(d.year, 1, 1))
+    return (d - start).days // 7 + 1
+
+
+def bweek_label(monday: date) -> str:
+    sun = monday + timedelta(days=6)
+    first = f"{monday:%m/%d/%Y}" if monday.year != sun.year else f"{monday:%m/%d}"
+    return f"Week {bweek_number(monday)} · {first} – {sun:%m/%d/%Y}"
+
+
+def att_week_options() -> list:
+    """Every broadcast week from week 1 of 2026 to this week, newest first."""
+    this = bweek_monday(date.today())
+    weeks, w = [], this
+    while w >= ATT_FIRST_WEEK:
+        weeks.append(w)
+        w -= timedelta(days=7)
+    return weeks
+
+
+def _att_date_range(preset: str, custom, week) -> tuple:
+    today = date.today()
+    if preset == "This week":
+        return bweek_monday(today), today
+    if preset == "Last week":
+        m = bweek_monday(today) - timedelta(days=7)
+        return m, m + timedelta(days=6)
+    if preset == "Broadcast week" and week:
+        m = week if isinstance(week, date) else date.fromisoformat(str(week))
+        return m, min(m + timedelta(days=6), today)
+    return _date_range(preset, custom)
+
+
 def _att_defaults() -> dict:
     y = date.today() - timedelta(days=1)
-    return {"a_preset": "Yesterday", "a_dates": (y, y), "a_sources": [], "a_tolls": [], "a_states": [],
+    return {"a_preset": "Yesterday", "a_dates": (y, y), "a_week": bweek_monday(date.today()),
+            "a_sources": [], "a_tolls": [], "a_states": [],
             "a_points": [], "a_show": "All", "a_group": "All tolls"}
 
 
@@ -1475,6 +1520,10 @@ def _att_reset():
 
 
 def _att_apply():
+    # picking a different week in the Broadcast week box switches Dates to that week
+    prev_week = (st.session_state.get("att_applied") or {}).get("a_week")
+    if st.session_state.get("a_week") != prev_week and st.session_state.get("a_preset") != "Custom":
+        st.session_state["a_preset"] = "Broadcast week"
     if st.session_state.get("a_preset") == "Custom":
         custom = st.session_state.get("a_dates")
         if not isinstance(custom, (list, tuple)) or len(custom) != 2:
@@ -1488,7 +1537,9 @@ def page_att_calls():
         st.session_state.setdefault(k, v)
     st.session_state.setdefault("att_applied", _att_defaults())
     a = {**_att_defaults(), **st.session_state["att_applied"]}
-    start, end = _date_range(a["a_preset"], a["a_dates"])
+    if st.session_state.get("a_week") not in att_week_options():
+        st.session_state["a_week"] = bweek_monday(date.today())
+    start, end = _att_date_range(a["a_preset"], a["a_dates"], a["a_week"])
 
     att = load_att(start, end)
     in_range = att[(att["_date"] >= start) & (att["_date"] <= end)]
@@ -1514,22 +1565,26 @@ def page_att_calls():
     dl_slot = h2.container()
 
     with st.form("att_filters"):
-        r1 = st.columns([2.4, 1.5, 1.6, 1.6, 1.2])
-        r1[0].segmented_control("Dates", DATE_PRESETS, key="a_preset")
-        r1[1].date_input("Custom range", key="a_dates", format="MM/DD/YYYY",
+        r1 = st.columns([3.6, 1.7, 1.5])
+        r1[0].segmented_control("Dates", ATT_DATE_PRESETS, key="a_preset",
+                                help="Weeks are broadcast weeks (Monday – Sunday)")
+        r1[1].selectbox("Broadcast week", att_week_options(), key="a_week", format_func=bweek_label,
+                        help="Used when Dates is set to Broadcast week")
+        r1[2].date_input("Custom range", key="a_dates", format="MM/DD/YYYY",
                          help="Used when Dates is set to Custom")
-        r1[2].multiselect("Source", src_opts, key="a_sources", placeholder="All sources")
-        r1[3].multiselect("Toll Dialed", toll_opts, key="a_tolls", placeholder="All tolls", format_func=fmt_phone)
-        r1[4].multiselect("State", state_opts, key="a_states", placeholder="All states")
-        r2 = st.columns([1.9, 2.0, 2.6, 1, 1.3], vertical_alignment="bottom")
+        r2 = st.columns([1.9, 1.6, 1.6, 1.2, 1.7])
         r2[0].segmented_control("Tolls", group_opts, key="a_group",
                                 help="USA Vein = every toll in the Toll Sources master's USA Vein group")
-        r2[1].multiselect("Point To", pt_opts, key="a_points", placeholder="All Point To numbers",
+        r2[1].multiselect("Source", src_opts, key="a_sources", placeholder="All sources")
+        r2[2].multiselect("Toll Dialed", toll_opts, key="a_tolls", placeholder="All tolls", format_func=fmt_phone)
+        r2[3].multiselect("State", state_opts, key="a_states", placeholder="All states")
+        r2[4].multiselect("Point To", pt_opts, key="a_points", placeholder="All Point To numbers",
                           format_func=fmt_phone)
-        r2[2].segmented_control("Show", ATT_SHOW, key="a_show",
+        r3 = st.columns([3.4, 2.0, 1, 1.3], vertical_alignment="bottom")
+        r3[0].segmented_control("Show", ATT_SHOW, key="a_show",
                                 help="Compare each call's Point To with the Toll Routing master")
-        r2[3].form_submit_button("Reset", width="stretch", on_click=_att_reset)
-        r2[4].form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
+        r3[2].form_submit_button("Reset", width="stretch", on_click=_att_reset)
+        r3[3].form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
                                  width="stretch", on_click=_att_apply)
     err = st.session_state.pop("att_error", None)
     if err:
@@ -1551,13 +1606,16 @@ def page_att_calls():
 
     bits = [a["a_group"] or "All tolls",
             ", ".join(a["a_sources"]) if a["a_sources"] else "All sources",
-            ", ".join(fmt_phone(x) for x in a["a_tolls"]) if a["a_tolls"] else "All tolls",
+            ", ".join(fmt_phone(x) for x in a["a_tolls"]) if a["a_tolls"] else "All toll numbers",
             ", ".join(a["a_states"]) if a["a_states"] else "All states"]
     if a["a_points"]:
         bits.append("Point To " + ", ".join(fmt_phone(x) for x in a["a_points"]))
     if (a["a_show"] or "All") != "All":
         bits.append(a["a_show"])
-    bits.append(f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}")
+    when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
+    if a["a_preset"] in ("This week", "Last week", "Broadcast week"):
+        when = f"Week {bweek_number(start)} ({when})"
+    bits.append(when)
     st.markdown(f'<div class="applied">Showing <b>{esc(" · ".join(bits))}</b></div>', unsafe_allow_html=True)
 
     secs = pd.to_numeric(view["Time(Secs)"], errors="coerce").fillna(0)
