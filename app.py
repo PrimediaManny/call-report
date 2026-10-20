@@ -1100,12 +1100,48 @@ def remove_dialog(rows: pd.DataFrame):
         st.rerun()
 
 
+def team_editor(contacts: pd.DataFrame):
+    """Admin: choose which reps belong to each team (used by the Call Log's Team filter)."""
+    teams = load_rep_teams()
+    names = sorted({str(x).strip() for x in contacts["rep"].dropna() if str(x).strip()} |
+                   {r for members in teams.values() for r in members}, key=str.lower)
+    with st.expander(f"Teams · {', '.join(f'{t} ({len(m)})' for t, m in sorted(teams.items())) or 'none yet'}",
+                     icon=":material/groups:"):
+        st.caption("Teams appear as filters on the Call Log. Add or remove reps here; new reps show up in the "
+                   "list once they're added above.")
+        for t in sorted(teams):
+            c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+            picked = c1.multiselect(t, names, default=sorted(teams[t], key=str.lower), key=f"team_{t}")
+            if c2.button("Save", key=f"team_save_{t}", type="primary", width="stretch",
+                         disabled=set(picked) == teams[t]):
+                for r in teams[t] - set(picked):
+                    sb.table("rep_teams").delete().eq("team", t).eq("rep", r).execute()
+                new = [{"team": t, "rep": r} for r in set(picked) - teams[t]]
+                if new:
+                    sb.table("rep_teams").insert(new).execute()
+                st.cache_data.clear()
+                st.rerun()
+        c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+        new_team = c1.text_input("New team name", placeholder="e.g. Political Team")
+        if c2.button("Create", width="stretch", disabled=not new_team.strip()):
+            st.session_state["new_team_pending"] = new_team.strip()
+        pending = st.session_state.get("new_team_pending")
+        if pending:
+            members = st.multiselect(f"Reps in {pending}", names, key="new_team_members")
+            if st.button(f"Save {pending}", type="primary", disabled=not members):
+                sb.table("rep_teams").insert([{"team": pending, "rep": r} for r in members]).execute()
+                st.session_state.pop("new_team_pending", None)
+                st.cache_data.clear()
+                st.rerun()
+
+
 def page_contacts():
     st.title("Contacts")
     st.markdown('<div class="page-sub">Who each extension belongs to</div>', unsafe_allow_html=True)
     st.caption("Edit a name and press Enter to rename it. Use Assign New when an extension changes hands. "
                "MMS Owner Name is only needed when the person's name is spelled differently in MMS.")
     contacts = load_contacts()
+    team_editor(contacts)
     c1, c2 = st.columns([1, 3])
     if c1.button("Assign New", icon=":material/person_add:", type="primary", width="stretch"):
         assign_new_dialog(contacts)
@@ -2266,6 +2302,18 @@ def _cl_lead_panel(r, calls: pd.DataFrame):
             st.markdown(lines, unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_rep_teams() -> dict:
+    """{team name: set of rep names} from the rep_teams table."""
+    teams = {}
+    for r in sb.table("rep_teams").select("team, rep").execute().data:
+        teams.setdefault(r["team"], set()).add(r["rep"])
+    return teams
+
+
+EVERYONE = "Everyone"
+
+
 def page_call_log():
     st.session_state.setdefault("cl_preset", "Yesterday")
     st.session_state.setdefault("cl_week", None)
@@ -2276,14 +2324,18 @@ def page_call_log():
     st.markdown("<h1 style='margin-bottom:0'>Call Log</h1>", unsafe_allow_html=True)
     st.caption("Every rep call, matched to its MMS lead. Click a call to see the lead.")
 
-    f = st.columns([3.0, 1.7, 2.0, 1.5])
+    teams = load_rep_teams()
+    team_opts = [EVERYONE] + sorted(teams)
+    if st.session_state.get("cl_team") not in team_opts:
+        st.session_state["cl_team"] = EVERYONE
+    f = st.columns([3.0, 1.7, 2.0, 1.9])
     f[0].segmented_control("Dates", CL_PRESETS, key="cl_preset", on_change=_cl_preset_changed)
     f[1].selectbox("Broadcast week", att_week_options(), key="cl_week", index=None, placeholder="Pick a week…",
                    format_func=bweek_label, on_change=_cl_week_changed)
     if st.session_state.get("cl_preset") == "Custom" and not st.session_state.get("cl_week"):
         y = date.today() - timedelta(days=1)
         st.session_state.setdefault("cl_custom", (y, y))
-        f[3].date_input("Custom dates", key="cl_custom", format="MM/DD/YYYY")
+        f[0].date_input("Custom dates", key="cl_custom", format="MM/DD/YYYY")
     start, end = _cl_range()
 
     calls = load_calls(start, end)
@@ -2293,6 +2345,7 @@ def page_call_log():
         if not calls.empty else []
     st.session_state["cl_sources"] = [x for x in st.session_state.get("cl_sources", []) if x in src_opts]
     f[2].multiselect("Lead source", src_opts, key="cl_sources", placeholder="All lead sources")
+    f[3].segmented_control("Team", team_opts, key="cl_team")
 
     when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
     if st.session_state.get("cl_week") or st.session_state.get("cl_preset") in ("This week", "Last week"):
@@ -2301,7 +2354,13 @@ def page_call_log():
         st.info(f"No calls for {when}.")
         return
 
+    # how many times each number was dialed in the picked dates (all reps)
+    calls = calls.copy()
+    calls["Times Dialed"] = calls.groupby("To")["To"].transform("count").astype(int)
     view = calls
+    team = st.session_state.get("cl_team") or EVERYONE
+    if team != EVERYONE:
+        view = view[view["From"].astype(str).isin(teams.get(team, set()))]
     if st.session_state["cl_sources"]:
         view = view[view["Lead Source"].isin(st.session_state["cl_sources"])]
 
@@ -2329,22 +2388,26 @@ def page_call_log():
     view = view.sort_values("Date/Time", ascending=False).reset_index(drop=True)
     found = view["Lead Id"] != "Not Found"
     table = pd.DataFrame({
-        "Time": view["Date/Time"].map(us_time),
+        "Date": view["Date/Time"].map(us_time),
         "Rep": view["From"],
-        "Lead": view["Company In Ad"].where(found, "Not in MMS").fillna(""),
-        "Contact": view["Contact Name (phase2)"].where(found, "").fillna(""),
-        "Lead source": view["Lead Source"].where(found, "").fillna(""),
+        "Lead ID": view["Lead Id"].where(found, "Not in MMS"),
+        "Lead Source": view["Lead Source"].where(found, "").fillna(""),
+        "Media Market": view["Media Market"].where(found, "").fillna(""),
+        "Company": view["Company In Ad"].where(found, "").fillna(""),
         "Status": view["Status"].where(found, "").fillna(""),
-        "Length": view["Duration"].map(_short_len),
+        "Times Dialed": view["Times Dialed"],
     })
 
     left, right = st.columns([2.6, 1], gap="medium")
     with left:
         ev = st.dataframe(table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 640),
                           on_select="rerun", selection_mode="single-row",
-                          key=f"cl_table_{start}_{end}_{rep}_{len(table)}",
-                          column_config={"Time": st.column_config.TextColumn(width="small"),
-                                         "Length": st.column_config.TextColumn(width="small")})
+                          key=f"cl_table_{start}_{end}_{rep}_{team}_{len(table)}",
+                          column_config={"Date": st.column_config.TextColumn(width="small"),
+                                         "Lead ID": st.column_config.TextColumn(width="small"),
+                                         "Times Dialed": st.column_config.NumberColumn(
+                                             format="%d", width="small",
+                                             help="Times this number was dialed in the picked dates (all reps)")})
     sel = ev.selection.rows if ev and ev.selection else []
     with right:
         if sel:
