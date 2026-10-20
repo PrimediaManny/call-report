@@ -2433,8 +2433,8 @@ def _calls_tab():
     found = view["Lead Id"] != "Not Found"
     table = pd.DataFrame({
         "Date": view["Date/Time"].map(us_time),
-        "Duration": view["Duration"].map(_short_len),
         "Rep": view["From"],
+        "Duration": view["Duration"].map(_short_len),
         "Lead ID": view["Lead Id"].where(found, "Not in MMS"),
         "Lead Source": view["Lead Source"].where(found, "").fillna(""),
         "Media Market": view["Media Market"].where(found, "").fillna(""),
