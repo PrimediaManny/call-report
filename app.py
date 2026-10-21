@@ -2422,9 +2422,15 @@ def _calls_tab():
 
     secs = view["Duration"].map(dur_seconds)
     leads = view.loc[view["Lead Id"] != "Not Found", "Lead Id"].nunique()
-    kpi_cards([{"label": "Calls", "value": f"{len(view):,}", "note": when},
-               {"label": "Leads reached", "value": f"{leads:,}", "note": ""},
-               {"label": "Talk time", "value": fmt_total(secs.sum()), "note": ""}])
+    is_admin = st.session_state.get("role", "admin") == "admin"
+    cards = [{"label": "Calls", "value": f"{len(view):,}", "note": when},
+             {"label": "Leads reached", "value": f"{leads:,}", "note": ""},
+             {"label": "Talk time", "value": fmt_total(secs.sum()), "note": ""}]
+    if is_admin:
+        dirs = view["Direction"].fillna("").str.lower()
+        cards[1:1] = [{"label": "Outbound", "value": f"{int((dirs == 'outbound').sum()):,}", "note": ""},
+                      {"label": "Inbound", "value": f"{int((dirs == 'inbound').sum()):,}", "note": ""}]
+    kpi_cards(cards)
     if view.empty:
         st.info("No calls match these filters.")
         return
@@ -2442,6 +2448,8 @@ def _calls_tab():
         "Status": view["Status"].where(found, "").fillna(""),
         "Times Dialed": view["Times Dialed"],
     })
+    if is_admin:
+        table.insert(0, "Direction", view["Direction"].fillna("").str.capitalize())
 
     left, right = st.columns([3, 1], gap="medium")
     with left:
