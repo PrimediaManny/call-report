@@ -16,6 +16,7 @@ import html
 import re
 import io
 from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 import pandas as pd
 import streamlit as st
@@ -2718,7 +2719,7 @@ def manager_overrides(deps: pd.DataFrame, managers: pd.DataFrame) -> pd.DataFram
             base = 0.0 if pd.isna(d.base) else float(d.base)
             rows.append({"row_id": d.row_id, "deposit_date": d.deposit_date, "salesperson": d.salesperson,
                          "company": d.company, "base": base, "manager": mgr, "rate": float(r["rate"]),
-                         "override": round(base * float(r["rate"]) / 100, 2)})
+                         "override": pay(base, float(r["rate"]) / 100)})
     return pd.DataFrame(rows, columns=["row_id", "deposit_date", "salesperson", "company", "base", "manager",
                                        "rate", "override"])
 
@@ -2814,6 +2815,205 @@ def commission_excel(table: pd.DataFrame, summary: pd.DataFrame, title: str, ove
     return buf.getvalue()
 
 
+def money2(x) -> float:
+    """Round to cents the way Excel does (half up): 20.825 -> 20.83."""
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return 0.0
+    return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def pay(base, rate) -> float:
+    """base x rate (rate as a fraction, e.g. 0.05), rounded half up to cents."""
+    if base is None or rate is None or pd.isna(base) or pd.isna(rate):
+        return 0.0
+    return money2(Decimal(str(float(base))) * Decimal(str(float(rate))))
+
+
+REPORT_TO = "Tony@primedianetwork.com"
+REPORT_FILE = "PRIMEDIA-SALES_AND_COMMISSION_REPORT_SALESREP.xlsx"
+PRIMEDIA_LOGO = "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"
+
+
+def breakdown_excel(deps: pd.DataFrame, managers: pd.DataFrame, group_mult: float, week_no: int, year: int):
+    """The 'Week NN Breakdown' sheet, laid out and formatted like the one sent to Tony each week."""
+    import base64
+    from openpyxl import Workbook
+    from openpyxl.drawing.image import Image as XLImage
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.properties import PageSetupProperties
+
+    acct = '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)'
+    thin = Side(style="thin")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    open_r = Border(left=thin, top=thin, bottom=thin)
+    yellow = PatternFill("solid", fgColor="FFFF00")
+    black_fill = PatternFill("solid", fgColor="000000")
+    f_black = Font(name="Aptos Narrow", size=11, bold=True, color="000000")
+    f_red = Font(name="Aptos Narrow", size=11, bold=True, color="FF0000")
+    f_yel = Font(name="Aptos Narrow", size=11, bold=True, color="FFFF00")
+    left = Alignment(horizontal="left", vertical="center")
+    center = Alignment(horizontal="center", vertical="center")
+    center_wrap = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Week {week_no} Breakdown"
+    ws.sheet_properties.tabColor = "FF0000"
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.sheet_view.zoomScale = 115
+    ws.freeze_panes = "A5"
+    ws.page_margins.left = ws.page_margins.right = ws.page_margins.top = ws.page_margins.bottom = 0
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.scale = 66
+    for col, w in zip("ABCDEFGHIJ", (11.43, 14.43, 27.14, 38.14, 22, 22, 13.43, 13.14, 14.57, 11.43)):
+        ws.column_dimensions[col].width = w
+    ws.column_dimensions["J"].hidden = True
+    cached = {}          # formula cell -> value, so previews (phone, Outlook) show numbers before Excel recalcs
+
+    def put(ref, value, font=f_black, align=left, border=box, fmt=None, fill=None, calc=None):
+        c = ws[ref]
+        c.value, c.font, c.alignment = value, font, align
+        if border is not None:
+            c.border = border
+        if fmt:
+            c.number_format = fmt
+        if fill is not None:
+            c.fill = fill
+        if calc is not None:
+            cached[ref] = calc
+        return c
+
+    try:
+        img = XLImage(io.BytesIO(base64.b64decode(PRIMEDIA_LOGO)))
+        img.width, img.height = 313, 59
+        ws.add_image(img, "A1")
+    except Exception:
+        pass
+    put("D3", f"SALES COMMISSIONS {year}", align=center, border=None)
+
+    mgr_rate = float(managers["rate"].iloc[0]) / 100 if not managers.empty else 0.03
+    heads = ["DATE ", "Week", "Sales", "Company", "Lead Source", "DEPOSIT STATUS", "TOTAL",
+             "COMMISSION PERCENTAGE", "TOTAL COMMISSIONS & PAYOUTS"]
+    ws.row_dimensions[4].height = 43.5
+    for i, h in enumerate(heads):
+        put(f"{'ABCDEFGHI'[i]}4", h, fill=yellow, align=left if i < 4 else (center if i == 4 else center_wrap))
+    put("J4", mgr_rate, font=Font(name="Aptos Narrow", size=11, bold=True, color="808080"), align=center,
+        border=None, fmt="0%")
+
+    rows = deps.sort_values(["salesperson", "deposit_date", "row_id"]).reset_index(drop=True)
+    r = 5
+    match_amt = {}
+    for d in rows.itertuples():
+        base = 0.0 if pd.isna(d.base) else float(d.base)
+        rate = None if pd.isna(d.pct) else float(d.pct) / 100
+        ws.row_dimensions[r].height = 16.5
+        put(f"A{r}", d.deposit_date, fmt="d-mmm")
+        put(f"B{r}", bweek_number(d.deposit_date), align=center)
+        put(f"C{r}", d.salesperson or "", font=f_red, fmt="d-mmm")
+        put(f"D{r}", d.company or "", font=f_red)
+        put(f"E{r}", d.lead_source or "", font=f_red, border=open_r)
+        put(f"F{r}", d.deposit_status or "", font=f_red, align=center, border=open_r, fmt=acct)
+        put(f"G{r}", base, font=f_red, align=center, border=open_r, fmt=acct)
+        put(f"H{r}", rate, font=f_red, align=center, fmt="0.0%")
+        put(f"I{r}", f"=ROUND(G{r}*H{r},2)", align=center, border=open_r, fmt=acct, calc=pay(base, rate or 0))
+        if d.matching:
+            put(f"J{r}", f"=ROUND(G{r}*$J$4,2)", border=None, fmt=acct, calc=pay(base, mgr_rate))
+            match_amt[r] = (str(d.salesperson or "").upper(), pay(base, mgr_rate))
+        r += 1
+    last_dep = r - 1
+    grp = rows[rows["group"]]
+    if not grp.empty:
+        gbase = float(grp["base"].fillna(0).sum())
+        ws.row_dimensions[r].height = 16.5
+        put(f"A{r}", grp["deposit_date"].max(), fmt="d-mmm")
+        put(f"B{r}", bweek_number(grp["deposit_date"].max()), align=center)
+        put(f"C{r}", GROUP_PAYEE, font=f_red, fmt="d-mmm")
+        put(f"D{r}", "", font=f_red)
+        put(f"E{r}", "", font=f_red, border=open_r)
+        put(f"F{r}", "", font=f_red, align=center, border=open_r, fmt=acct)
+        put(f"G{r}", gbase, font=f_red, align=center, border=open_r, fmt=acct)
+        put(f"H{r}", group_mult, font=f_red, align=center)
+        put(f"I{r}", f"=ROUND(G{r}*H{r},2)", align=center, border=open_r, fmt=acct, calc=pay(gbase, group_mult))
+        r += 1
+    last = r - 1
+
+    # people in the summary: everyone with a payout row, plus the matching managers
+    mgr_names = sorted(managers["manager"].str.upper().unique()) if not managers.empty else []
+    people = sorted(set(str(x).upper() for x in rows["salesperson"].dropna()) | set(mgr_names)
+                    | ({GROUP_PAYEE} if not grp.empty else set()))
+    tot = r
+    for col in "ABCDEFGHI":
+        put(f"{col}{tot}", None, fill=yellow, align=center if col in "FGHI" else left,
+            border=open_r if col in "EFGI" else box, fmt=acct if col in "FGI" else None)
+    for col, name in zip("CD", mgr_names[:2] if mgr_names else []):
+        put(f"{col}{tot}", name, font=f_yel, fill=yellow)
+    put(f"G{tot}", f"=SUM(G5:G{last_dep})", fill=yellow, align=center, border=open_r, fmt=acct,
+        calc=money2(rows["base"].fillna(0).sum()))
+    put(f"H{tot}", mgr_rate, fill=yellow, align=center, fmt="0.0%")
+    s_first = tot + 3
+    s_last = s_first + len(people) - 1
+    ws.row_dimensions[tot + 1].height = 8.25
+    for col in "ABCDEFGHI":
+        ws[f"{col}{tot + 1}"].fill = black_fill
+    put(f"A{tot + 2}", "Sales", fill=yellow)
+    put(f"B{tot + 2}", "TOTAL", fill=yellow)
+
+    own = {}
+    for rr in range(5, last + 1):
+        nm = str(ws[f"C{rr}"].value or "").upper()
+        own[nm] = own.get(nm, 0.0) + cached[f"I{rr}"]
+    grand = 0.0
+    for i, p in enumerate(people):
+        rr = s_first + i
+        put(f"A{rr}", p, font=f_red, fmt="d-mmm")
+        f = f"=ROUND(SUMIF($C$5:$C${last},A{rr},$I$5:$I${last}),2)"
+        val = money2(own.get(p, 0.0))
+        if p in mgr_names:
+            f += f'+SUMIFS($J$5:$J${max(last_dep, 5)},$C$5:$C${max(last_dep, 5)},"<>"&A{rr})'
+            val = money2(val + sum(a for who, a in match_amt.values() if who != p))
+        put(f"B{rr}", f, align=center, fmt=acct, calc=val)
+        grand += val
+    put(f"I{tot}", f"=SUM(B{s_first}:B{s_last})", fill=yellow, align=center, border=open_r, fmt=acct,
+        calc=money2(grand))
+    ws.auto_filter.ref = f"A4:I{tot}"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return _fill_cached(buf.getvalue(), cached)
+
+
+def _fill_cached(xlsx: bytes, cached: dict) -> bytes:
+    """Write each formula's result next to it in the file, so the numbers show even before a recalc."""
+    import zipfile
+    src = zipfile.ZipFile(io.BytesIO(xlsx))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                s = data.decode("utf-8")
+                for ref, v in cached.items():
+                    s = re.sub(rf'(<c r="{ref}"[^>]*>)(<f>.*?</f>)(<v\s*/>|<v></v>)?',
+                               lambda m, v=v: f"{m.group(1)}{m.group(2)}<v>{v!r}</v>", s, count=1)
+                data = s.encode("utf-8")
+            z.writestr(item, data)
+    return out.getvalue()
+
+
+def report_email(xlsx: bytes, week_no: int, start: date, end: date) -> bytes:
+    """A ready-to-send email (opens as a new message in Outlook) to Tony with the breakdown attached."""
+    from email.message import EmailMessage
+    msg = EmailMessage()
+    msg["To"] = REPORT_TO
+    msg["Subject"] = f"Week {week_no} Sales & Commission Breakdown"
+    msg["X-Unsent"] = "1"
+    msg.set_content(f"Hi Tony,\n\nAttached is the Week {week_no} sales and commission breakdown "
+                    f"({start:%m/%d/%Y} - {end:%m/%d/%Y}).\n\nThanks,\nJustin\n")
+    msg.add_attachment(xlsx, maintype="application", subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       filename=REPORT_FILE)
+    return msg.as_bytes()
+
+
 @st.dialog("Assign commission rate")
 def assign_rate_dialog(reps: list, rates: pd.DataFrame):
     pick = st.selectbox("Salesperson", reps + ["+ Someone else…"], index=None, placeholder="Pick a salesperson")
@@ -2887,6 +3087,46 @@ def _sync_waiter():
                 icon=":material/sync:")
 
 
+def _prep_deps(deps, rates, overrides, matching, grouped) -> pd.DataFrame:
+    """Add base, rate, commission (rounded half up) and the Matching / Group ticks to each deposit."""
+    deps = deps.sort_values(["salesperson", "deposit_date", "row_id"]).reset_index(drop=True)
+    base = deps["commissionable_amount"].where(deps["commissionable_amount"].notna(), deps["deposit_amount"])
+    rep_rates = [_rep_rate(rates, r, d) for r, d in zip(deps["salesperson"], deps["deposit_date"])]
+    pct = [overrides.get(int(rid), rr) for rid, rr in zip(deps["row_id"], rep_rates)]
+    deps = deps.assign(base=base, pct=pct, rep_rate=rep_rates,
+                       overridden=[int(rid) in overrides for rid in deps["row_id"]],
+                       matching=[int(rid) in matching for rid in deps["row_id"]],
+                       group=[int(rid) in grouped for rid in deps["row_id"]])
+    deps["commission"] = [pay(b, (p or 0) / 100) if p is not None and not pd.isna(p) else 0.0
+                          for b, p in zip(deps["base"].fillna(0), deps["pct"])]
+    return deps
+
+
+def _email_button(where, deps: pd.DataFrame, managers: pd.DataFrame, group_mult: float, start: date, end: date,
+                  week_view: bool):
+    """Below Refresh: download a ready-to-send email to Tony with the Week NN Breakdown attached."""
+    wk = bweek_number(start)
+    if not week_view:
+        where.button("Email Tony", icon=":material/mail:", width="stretch", disabled=True,
+                     help="Pick a single week (This week, Last week or a broadcast week) to email its breakdown")
+        return
+    # rows that pay someone: reps with a rate, plus anything ticked Matching or Group
+    pays = deps[deps["pct"].notna() | deps["matching"] | deps["group"]]
+    try:
+        xlsx = breakdown_excel(pays, managers, group_mult, wk, start.year)
+        eml = report_email(xlsx, wk, start, end)
+    except Exception as e:
+        where.button("Email Tony", icon=":material/mail:", width="stretch", disabled=True, help=f"Couldn't build: {e}")
+        return
+    where.download_button(f"Email Week {wk} to Tony", eml, file_name=f"Week {wk} Breakdown - email to Tony.eml",
+                          mime="message/rfc822", icon=":material/mail:", width="stretch",
+                          help=f"Downloads a new email to {REPORT_TO} with the Week {wk} Breakdown attached. "
+                               "Open the download and it opens in Outlook ready to send.")
+    where.download_button(f"Week {wk} file only", xlsx, file_name=REPORT_FILE, type="tertiary",
+                          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                          icon=":material/download:", width="stretch")
+
+
 def page_commissions():
     h1, h2 = st.columns([4, 1], vertical_alignment="bottom")
     h1.title("Commissions")
@@ -2931,25 +3171,20 @@ def page_commissions():
     when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
     if st.session_state.get("cm_week") or st.session_state.get("cm_preset") in ("This week", "Last week"):
         when = f"Week {bweek_number(start)} · {when}"
+    week_view = bool(st.session_state.get("cm_week") or st.session_state.get("cm_preset") in ("This week", "Last week"))
+    all_deps = _prep_deps(deps, rates, overrides, matching, grouped)
+    _email_button(h2, all_deps, managers, group_mult, start, end, week_view)
+    deps = all_deps
     if rep_pick:
-        deps = deps[deps["salesperson"].isin(rep_pick)]
+        deps = deps[deps["salesperson"].isin(rep_pick)].reset_index(drop=True)
     if deps.empty:
         st.info(f"No deposits for {when}.")
         return
 
-    deps = deps.sort_values(["salesperson", "deposit_date", "row_id"]).reset_index(drop=True)
-    base = deps["commissionable_amount"].where(deps["commissionable_amount"].notna(), deps["deposit_amount"])
-    rep_rates = [_rep_rate(rates, r, d) for r, d in zip(deps["salesperson"], deps["deposit_date"])]
-    pct = [overrides.get(int(rid), rr) for rid, rr in zip(deps["row_id"], rep_rates)]
-    deps = deps.assign(base=base, pct=pct, rep_rate=rep_rates,
-                       overridden=[int(rid) in overrides for rid in deps["row_id"]],
-                       matching=[int(rid) in matching for rid in deps["row_id"]],
-                       group=[int(rid) in grouped for rid in deps["row_id"]])
-    deps["commission"] = (deps["base"].fillna(0) * deps["pct"].fillna(0) / 100).round(2)
     mgr_ov = manager_overrides(deps[deps["matching"]], managers)
     grp = deps[deps["group"]].copy()
-    grp["group_pay"] = (grp["base"].fillna(0) * group_mult).round(2)
-    total_grp = float(grp["group_pay"].sum()) if not grp.empty else 0.0
+    grp["group_pay"] = [pay(b, group_mult) for b in grp["base"].fillna(0)]
+    total_grp = pay(float(grp["base"].fillna(0).sum()), group_mult) if not grp.empty else 0.0
 
     total_dep = float(deps["deposit_amount"].sum())
     total_base = float(deps["base"].fillna(0).sum())
