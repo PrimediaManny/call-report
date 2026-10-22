@@ -2691,6 +2691,39 @@ def load_commission_rates() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def load_commission_managers() -> pd.DataFrame:
+    data = sb.table("commission_managers").select("*").execute().data
+    df = pd.DataFrame(data, columns=["id", "manager", "rate", "excludes", "effective_from"])
+    df["effective_from"] = pd.to_datetime(df["effective_from"]).dt.date
+    df["rate"] = pd.to_numeric(df["rate"], errors="coerce")
+    return df
+
+
+def manager_overrides(deps: pd.DataFrame, managers: pd.DataFrame) -> pd.DataFrame:
+    """Matching: each manager earns their % of the commissionable amount on every deposit passed in
+    (the ones ticked Matching), except their own sales. Uses the manager's rate in effect that day."""
+    rows = []
+    if deps.empty or managers.empty:
+        return pd.DataFrame(columns=["row_id", "deposit_date", "salesperson", "company", "base", "manager",
+                                     "rate", "override"])
+    for mgr, rules in managers.sort_values("effective_from").groupby("manager"):
+        for d in deps.itertuples():
+            r = rules[rules["effective_from"] <= d.deposit_date]
+            if r.empty:
+                continue
+            r = r.iloc[-1]
+            excl = {mgr.upper()}          # a manager never earns matching on their own sale
+            if str(d.salesperson or "").upper() in excl:
+                continue
+            base = 0.0 if pd.isna(d.base) else float(d.base)
+            rows.append({"row_id": d.row_id, "deposit_date": d.deposit_date, "salesperson": d.salesperson,
+                         "company": d.company, "base": base, "manager": mgr, "rate": float(r["rate"]),
+                         "override": round(base * float(r["rate"]) / 100, 2)})
+    return pd.DataFrame(rows, columns=["row_id", "deposit_date", "salesperson", "company", "base", "manager",
+                                       "rate", "override"])
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_commission_overrides() -> dict:
     return {int(r["row_id"]): float(r["rate"]) for r in
             sb.table("commission_overrides").select("row_id, rate").execute().data}
@@ -2729,7 +2762,7 @@ def _money(x) -> str:
     return "" if x is None or pd.isna(x) else f"${x:,.2f}"
 
 
-def commission_excel(table: pd.DataFrame, summary: pd.DataFrame, title: str):
+def commission_excel(table: pd.DataFrame, summary: pd.DataFrame, title: str, overrides: pd.DataFrame = None):
     try:
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     except ImportError:
@@ -2761,6 +2794,16 @@ def commission_excel(table: pd.DataFrame, summary: pd.DataFrame, title: str):
         for i, cname in enumerate(cols):
             ws.column_dimensions[chr(65 + i)].width = widths.get(cname, 14)
         start = last + 2
+        if overrides is not None and not overrides.empty:
+            ws.cell(row=start + 1, column=1, value="MANAGER OVERRIDES").font = Font(bold=True)
+            overrides.to_excel(w, index=False, sheet_name="Commissions", startrow=start + 1)
+            for c in ws[start + 2]:
+                c.fill, c.font = yellow, Font(bold=True)
+            for row in ws.iter_rows(min_row=start + 3, max_row=ws.max_row):
+                row[1].font = red
+                for i in (4, 6):
+                    row[i].number_format = '"$"#,##0.00'
+            start = ws.max_row + 2
         summary.to_excel(w, index=False, sheet_name="Commissions", startrow=start)
         for c in ws[start + 1]:
             c.fill, c.font = yellow, Font(bold=True)
@@ -2798,11 +2841,17 @@ def assign_rate_dialog(reps: list, rates: pd.DataFrame):
         st.rerun()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_commission_matching() -> set:
+    return {int(r["row_id"]) for r in sb.table("commission_matching").select("row_id").execute().data}
+
+
 def page_commissions():
     st.title("Commissions")
     synced = load_deposit_sync_time()
-    st.caption("Deposits from the NEW DEPOSIT REPORT, by broadcast week, with each rep's commission. "
-               + (f"Last synced {us_time(synced.tz_convert('America/Chicago'))}." if synced is not None else ""))
+    st.caption("Deposits from the NEW DEPOSIT REPORT, by broadcast week. Rates are set on **Manage → Assign "
+               "Commissions**. " + (f"Last synced {us_time(synced.tz_convert('America/Chicago'))}."
+                                     if synced is not None else ""))
 
     st.session_state.setdefault("cm_preset", "Last week")
     st.session_state.setdefault("cm_week", None)
@@ -2824,7 +2873,8 @@ def page_commissions():
     deps = load_deposits(start, end)
     rates = load_commission_rates()
     overrides = load_commission_overrides()
-    all_reps = sorted(set(deps["salesperson"].dropna()) | set(rates["salesperson"].dropna()))
+    matching = load_commission_matching()
+    managers = load_commission_managers()
     rep_pick = f[2].multiselect("Salesperson", sorted(deps["salesperson"].dropna().unique()),
                                 placeholder="All salespeople", key="cm_reps")
 
@@ -2833,147 +2883,275 @@ def page_commissions():
         when = f"Week {bweek_number(start)} · {when}"
     if rep_pick:
         deps = deps[deps["salesperson"].isin(rep_pick)]
+    if deps.empty:
+        st.info(f"No deposits for {when}.")
+        return
 
-    top = st.container()
-    bottom_l, bottom_r = st.columns([1.3, 1], gap="large")
-    left = top
-    with bottom_r:
+    deps = deps.sort_values(["salesperson", "deposit_date", "row_id"]).reset_index(drop=True)
+    base = deps["commissionable_amount"].where(deps["commissionable_amount"].notna(), deps["deposit_amount"])
+    rep_rates = [_rep_rate(rates, r, d) for r, d in zip(deps["salesperson"], deps["deposit_date"])]
+    pct = [overrides.get(int(rid), rr) for rid, rr in zip(deps["row_id"], rep_rates)]
+    deps = deps.assign(base=base, pct=pct, rep_rate=rep_rates,
+                       overridden=[int(rid) in overrides for rid in deps["row_id"]],
+                       matching=[int(rid) in matching for rid in deps["row_id"]])
+    deps["commission"] = (deps["base"].fillna(0) * deps["pct"].fillna(0) / 100).round(2)
+    mgr_ov = manager_overrides(deps[deps["matching"]], managers)
+
+    total_dep = float(deps["deposit_amount"].sum())
+    total_base = float(deps["base"].fillna(0).sum())
+    total_comm = float(deps["commission"].sum())
+    total_mgr = float(mgr_ov["override"].sum()) if not mgr_ov.empty else 0.0
+    kpi_cards([
+        {"label": "Deposits", "value": f"{len(deps):,}", "note": when},
+        {"label": "Total deposited", "value": f"${total_dep:,.0f}", "note": ""},
+        {"label": "Commissionable", "value": f"${total_base:,.0f}", "note": ""},
+        {"label": "Total payouts", "value": f"${total_comm + total_mgr:,.2f}",
+         "note": f"${total_comm:,.2f} commissions + ${total_mgr:,.2f} matching", "alert": True},
+    ])
+    missing = sorted(deps.loc[deps["pct"].isna(), "salesperson"].dropna().unique())
+    if missing:
+        st.warning("No commission rate set for: " + ", ".join(missing)
+                   + " — set it on **Manage → Assign Commissions**. Until then their commission shows $0.")
+
+    # ---------- deposits ----------
+    mgr_names = ", ".join(sorted(managers["manager"].unique())) or "the managers"
+    mgr_rates = sorted({f"{r:g}%" for r in managers["rate"]}) or ["3%"]
+    table = pd.DataFrame({
+        "row_id": deps["row_id"],
+        "Date": deps["deposit_date"].map(lambda d: f"{d.month}/{d.day}/{d:%y}"),
+        "Week": deps["week"].fillna(""),
+        "Sales": deps["salesperson"].fillna(""),
+        "Company": deps["company"].fillna(""),
+        "Lead Source": deps["lead_source"].fillna("").str.title(),
+        "Deposit Status": deps["deposit_status"].fillna(""),
+        "Deposit": deps["deposit_amount"],
+        "Commissionable": deps["base"],
+        "Commission %": deps["pct"],
+        "Commission": deps["commission"],
+        "Matching": deps["matching"],
+    })
+    st.caption(f"Tick **Matching** to pay {mgr_names} {' / '.join(mgr_rates)} of that deposit's commissionable "
+               "amount (a manager never earns matching on their own sale). Change a **Commission %** to override "
+               "it for one deposit; clear it to go back to the rep's rate.")
+    ed = st.data_editor(
+        table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 620),
+        key=f"comm_tbl_{start}_{end}_{'-'.join(rep_pick)}_{st.session_state.get('ov_v', 0)}",
+        column_order=[c for c in table.columns if c != "row_id"],
+        disabled=[c for c in table.columns if c not in ("Commission %", "Matching")],
+        column_config={
+            "Sales": st.column_config.TextColumn(width="small"),
+            "Company": st.column_config.TextColumn(width="medium"),
+            "Week": st.column_config.TextColumn(width="small"),
+            "Deposit": st.column_config.NumberColumn(format="dollar"),
+            "Commissionable": st.column_config.NumberColumn(
+                format="dollar", help="From the deposit report's Commissionable Amount (deposit if blank)"),
+            "Commission %": st.column_config.NumberColumn(format="%.2f%%", min_value=0, max_value=100, step=0.25,
+                                                          help="Rep's rate, or this deposit's override"),
+            "Commission": st.column_config.NumberColumn(format="dollar"),
+            "Matching": st.column_config.CheckboxColumn(
+                width="small", help=f"Pays {mgr_names} their matching % on this deposit"),
+        })
+    changed = False
+    old, new = table["Commission %"], ed["Commission %"]
+    for _, r in ed[~((old == new) | (old.isna() & new.isna()))].iterrows():
+        rid = int(r["row_id"])
+        val = r["Commission %"]
+        rep_rate = deps.loc[deps["row_id"] == rid, "rep_rate"].iloc[0]
+        if val is None or pd.isna(val) or (rep_rate is not None and float(val) == rep_rate):
+            sb.table("commission_overrides").delete().eq("row_id", rid).execute()
+        else:
+            sb.table("commission_overrides").upsert({"row_id": rid, "rate": float(val)}).execute()
+        changed = True
+    for _, r in ed[ed["Matching"] != table["Matching"]].iterrows():
+        rid = int(r["row_id"])
+        if bool(r["Matching"]):
+            sb.table("commission_matching").upsert({"row_id": rid}).execute()
+        else:
+            sb.table("commission_matching").delete().eq("row_id", rid).execute()
+        changed = True
+    if changed:
+        st.cache_data.clear()
+        st.session_state["ov_v"] = st.session_state.get("ov_v", 0) + 1
+        st.rerun()
+    if deps["overridden"].any():
+        st.caption("Commission % overridden: " + ", ".join(
+            f"{r.company} ({r.deposit_date.month}/{r.deposit_date.day}) {r.pct:g}%"
+            for r in deps[deps["overridden"]].itertuples()))
+
+    # ---------- week summary + person detail ----------
+    own = deps.groupby("salesperson").agg(Deposits=("row_id", "size"), Total=("deposit_amount", "sum"),
+                                          Commission=("commission", "sum"))
+    ovs = mgr_ov.groupby("manager")["override"].sum() if not mgr_ov.empty else pd.Series(dtype=float)
+    people = sorted(set(own.index) | set(ovs.index) | set(managers["manager"]))
+    summary = pd.DataFrame({
+        "Sales": people,
+        "Deposits": [int(own["Deposits"].get(p, 0)) for p in people],
+        "Total": [float(own["Total"].get(p, 0.0)) for p in people],
+        "Commission": [round(float(own["Commission"].get(p, 0.0)), 2) for p in people],
+        "Matching": [round(float(ovs.get(p, 0.0)), 2) for p in people],
+    })
+    summary["Total Payout"] = (summary["Commission"] + summary["Matching"]).round(2)
+    summary = pd.concat([summary, pd.DataFrame([{
+        "Sales": "TOTAL", "Deposits": len(deps), "Total": total_dep, "Commission": round(total_comm, 2),
+        "Matching": round(total_mgr, 2), "Total Payout": round(total_comm + total_mgr, 2)}])], ignore_index=True)
+
+    st.markdown("**Week summary**")
+    sl, sr = st.columns([1.5, 1], gap="large")
+
+    def _sum_style(frame):
+        css = pd.DataFrame("", index=frame.index, columns=frame.columns)
+        css["Sales"] = "color: #d11a1a; font-weight: 700"
+        css.iloc[-1] = "background-color: #fff36b; font-weight: 700"
+        return css
+    with sl:
+        ev = st.dataframe(summary.style.apply(_sum_style, axis=None).format(
+            {"Total": "${:,.2f}", "Commission": "${:,.2f}", "Matching": "${:,.2f}", "Total Payout": "${:,.2f}"}),
+            hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+            key=f"comm_sum_{start}_{end}_{'-'.join(rep_pick)}")
+        st.caption("Click a name to see what they're being paid for.")
+    sel = ev.selection.rows if ev and ev.selection else []
+    with sr:
+        person = summary.iloc[sel[0]]["Sales"] if sel else None
+        with st.container(border=True):
+            if not person:
+                st.caption("Click a name in the Week summary to see each deposit they're paid on.")
+            else:
+                _payout_box(person, deps, mgr_ov, summary, when)
+
+    # ---------- export ----------
+    export = table.drop(columns=["row_id"]).copy()
+    export["Matching"] = export["Matching"].map(lambda m: "Yes" if m else "")
+    export = pd.concat([export, pd.DataFrame([{
+        "Date": "TOTALS", "Deposit": total_dep, "Commissionable": total_base,
+        "Commission %": round(total_comm / total_base * 100, 2) if total_base else None,
+        "Commission": round(total_comm, 2)}])], ignore_index=True)
+    mo_export = None
+    if not mgr_ov.empty:
+        mo_export = pd.DataFrame({
+            "Date": mgr_ov["deposit_date"].map(lambda d: f"{d.month}/{d.day}/{d:%y}"),
+            "Manager": mgr_ov["manager"], "Sale by": mgr_ov["salesperson"], "Company": mgr_ov["company"],
+            "Commissionable": mgr_ov["base"], "Matching %": mgr_ov["rate"], "Matching $": mgr_ov["override"],
+        }).sort_values(["Manager", "Date"])
+    xlsx = commission_excel(export, summary, f"SALES COMMISSIONS · {when}", mo_export)
+    if xlsx:
+        sl.download_button("Download Excel", xlsx, file_name=f"commissions_{start}_{end}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           icon=":material/table_view:")
+
+
+def _payout_box(person: str, deps: pd.DataFrame, mgr_ov: pd.DataFrame, summary: pd.DataFrame, when: str):
+    row = summary[summary["Sales"] == person].iloc[0]
+    st.markdown(f"<div style='opacity:.6;font-size:.75rem;letter-spacing:.04em'>{esc(when.upper())}</div>"
+                f"<div style='font-size:1.35rem;font-weight:700;color:#d11a1a'>{esc(person)}</div>"
+                f"<div style='font-size:1.6rem;font-weight:700;margin:2px 0 8px'>${row['Total Payout']:,.2f}"
+                f"<span style='font-size:.85rem;font-weight:400;opacity:.65'> total payout</span></div>",
+                unsafe_allow_html=True)
+    line = ("display:grid;grid-template-columns:62px 1fr 92px 58px 78px;gap:6px;padding:5px 0;font-size:.84rem;"
+            "border-bottom:1px dashed rgba(128,128,128,.25)")
+    head = line + ";opacity:.6;font-size:.75rem;border-bottom:1px solid rgba(128,128,128,.3)"
+
+    def _block(title, rows, total):
+        st.markdown(f"<div style='font-weight:700;margin:10px 0 2px'>{title} · ${total:,.2f}</div>",
+                    unsafe_allow_html=True)
+        if not rows:
+            st.caption("None this period.")
+            return
+        st.markdown(f"<div style='{head}'><span>Date</span><span>Company</span><span style='text-align:right'>"
+                    f"Commissionable</span><span style='text-align:right'>%</span><span style='text-align:right'>"
+                    f"Paid</span></div>" + "".join(rows), unsafe_allow_html=True)
+
+    if person == "TOTAL":
+        st.caption("Click a person's name to see their details.")
+        return
+    mine = deps[deps["salesperson"] == person]
+    rows = [f"<div style='{line}'><span>{d.deposit_date.month}/{d.deposit_date.day}</span><span>{esc(d.company)}"
+            f"</span><span style='text-align:right'>${(0 if pd.isna(d.base) else d.base):,.2f}</span>"
+            f"<span style='text-align:right'>{'' if pd.isna(d.pct) else f'{d.pct:g}%'}</span>"
+            f"<span style='text-align:right'><b>${d.commission:,.2f}</b></span></div>" for d in mine.itertuples()]
+    _block("Own sales", rows, float(row["Commission"]))
+    mo = mgr_ov[mgr_ov["manager"] == person] if not mgr_ov.empty else mgr_ov
+    if not mo.empty or float(row["Matching"]):
+        rows = [f"<div style='{line}'><span>{m.deposit_date.month}/{m.deposit_date.day}</span><span>{esc(m.company)}"
+                f" <span style='opacity:.6'>({esc(m.salesperson)})</span></span><span style='text-align:right'>"
+                f"${m.base:,.2f}</span><span style='text-align:right'>{m.rate:g}%</span><span style='text-align:right'>"
+                f"<b>${m.override:,.2f}</b></span></div>" for m in mo.itertuples()]
+        _block("Matching", rows, float(row["Matching"]))
+
+
+def page_assign_commissions():
+    st.title("Assign Commissions")
+    st.markdown('<div class="page-sub">Commission rates and matching managers</div>', unsafe_allow_html=True)
+    rates = load_commission_rates()
+    deps_all = load_deposits(COMM_FIRST_WEEK, date.today())
+    all_reps = sorted(set(deps_all["salesperson"].dropna()) | set(rates["salesperson"].dropna()))
+    c1, c2 = st.columns([1.3, 1], gap="large")
+
+    with c1:
         st.markdown("**Commission rates**")
-        if st.button("Assign rate", icon=":material/percent:", type="primary", width="stretch"):
+        st.caption("Each rep's % of the commissionable amount. A rate applies from its Starting date on; use "
+                   "**Assign rate** with a later date when a rep's rate changes, so earlier deposits keep theirs.")
+        if st.button("Assign rate", icon=":material/percent:", type="primary"):
             assign_rate_dialog(all_reps, rates)
         if rates.empty:
-            st.caption("No rates yet. Use **Assign rate** to set each rep's %.")
+            st.info("No rates yet. Use **Assign rate** to set each rep's %.")
         else:
             rshow = rates.sort_values(["salesperson", "effective_from"]).reset_index(drop=True)
             rv = pd.DataFrame({"id": rshow["id"], "Sales": rshow["salesperson"], "Rate %": rshow["rate"],
                                "Starting": rshow["effective_from"].map(
                                    lambda d: "Beginning" if d == BASE_DATE else f"{d:%m/%d/%Y}"),
                                "Remove": False})
-            ed = st.data_editor(rv, hide_index=True, width="stretch", key=f"rates_{st.session_state.get('rates_v', 0)}",
-                                column_order=["Sales", "Rate %", "Starting", "Remove"],
-                                disabled=["Sales", "Starting"],
+            ed = st.data_editor(rv, hide_index=True, width="stretch",
+                                key=f"rates_{st.session_state.get('rates_v', 0)}",
+                                column_order=["Sales", "Rate %", "Starting", "Remove"], disabled=["Sales", "Starting"],
                                 column_config={"Rate %": st.column_config.NumberColumn(format="%.2f%%", min_value=0,
                                                                                        max_value=100, step=0.25),
                                                "Remove": st.column_config.CheckboxColumn(width="small")})
-            changed = ed[ed["Rate %"] != rv["Rate %"]]
-            removed = ed[ed["Remove"]]
-            if not changed.empty or not removed.empty:
-                for _, r in changed.iterrows():
+            ch, rm = ed[ed["Rate %"] != rv["Rate %"]], ed[ed["Remove"]]
+            if not ch.empty or not rm.empty:
+                for _, r in ch.iterrows():
                     sb.table("commission_rates").update({"rate": float(r["Rate %"] or 0)}).eq("id", int(r["id"])).execute()
-                for _, r in removed.iterrows():
+                for _, r in rm.iterrows():
                     sb.table("commission_rates").delete().eq("id", int(r["id"])).execute()
                 st.cache_data.clear()
                 st.session_state["rates_v"] = st.session_state.get("rates_v", 0) + 1
                 st.rerun()
-        st.caption("A rate applies to the rep's deposits from its Starting date on. Edit the % in the table, or "
-                   "use Assign rate when a rep's rate changes.")
+        no_rate = [p for p in sorted(deps_all["salesperson"].dropna().unique()) if p not in set(rates["salesperson"])]
+        if no_rate:
+            st.caption("Salespeople with deposits but no rate yet: " + ", ".join(no_rate))
 
-    with left:
-        if deps.empty:
-            st.info(f"No deposits for {when}.")
-            return
-        deps = deps.sort_values(["salesperson", "deposit_date", "row_id"]).reset_index(drop=True)
-        base = deps["commissionable_amount"].where(deps["commissionable_amount"].notna(), deps["deposit_amount"])
-        rep_rates = [_rep_rate(rates, r, d) for r, d in zip(deps["salesperson"], deps["deposit_date"])]
-        pct = [overrides.get(int(rid), rr) for rid, rr in zip(deps["row_id"], rep_rates)]
-        deps = deps.assign(base=base, pct=pct, rep_rate=rep_rates,
-                           overridden=[int(rid) in overrides for rid in deps["row_id"]])
-        deps["commission"] = deps["base"].fillna(0) * deps["pct"].fillna(0) / 100
-
-        total_dep = float(deps["deposit_amount"].sum())
-        total_base = float(deps["base"].fillna(0).sum())
-        total_comm = float(deps["commission"].sum())
-        missing = sorted(deps.loc[deps["pct"].isna(), "salesperson"].dropna().unique())
-        kpi_cards([
-            {"label": "Deposits", "value": f"{len(deps):,}", "note": when},
-            {"label": "Total deposited", "value": f"${total_dep:,.0f}", "note": ""},
-            {"label": "Commissionable", "value": f"${total_base:,.0f}", "note": ""},
-            {"label": "Total commissions", "value": f"${total_comm:,.2f}",
-             "note": f"{total_comm / total_base:.1%} of commissionable" if total_base else "", "alert": True},
-        ])
-        if missing:
-            st.warning("No commission rate set for: " + ", ".join(missing)
-                       + ". Their commission shows $0 until you assign a rate.")
-
-        table = pd.DataFrame({
-            "row_id": deps["row_id"],
-            "Date": deps["deposit_date"].map(lambda d: f"{d.month}/{d.day}/{d:%y}"),
-            "Week": deps["week"].fillna(""),
-            "Sales": deps["salesperson"].fillna(""),
-            "Company": deps["company"].fillna(""),
-            "Lead Source": deps["lead_source"].fillna("").str.title(),
-            "Deposit Status": deps["deposit_status"].fillna(""),
-            "Deposit": deps["deposit_amount"],
-            "Commissionable": deps["base"],
-            "Commission %": deps["pct"],
-            "Commission": deps["commission"].round(2),
-        })
-        st.caption("Change a **Commission %** to override it for that one deposit. "
-                   "Clear the cell to go back to the rep's rate.")
-        ed = st.data_editor(
-            table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 620),
-            key=f"comm_tbl_{start}_{end}_{'-'.join(rep_pick)}_{st.session_state.get('ov_v', 0)}",
-            column_order=[c for c in table.columns if c != "row_id"],
-            disabled=[c for c in table.columns if c != "Commission %"],
-            column_config={
-                "Sales": st.column_config.TextColumn(width="small"),
-                "Company": st.column_config.TextColumn(width="medium"),
-                "Week": st.column_config.TextColumn(width="small"),
-                "Deposit": st.column_config.NumberColumn(format="dollar"),
-                "Commissionable": st.column_config.NumberColumn(
-                    format="dollar", help="From the deposit report's Commissionable Amount (deposit if blank)"),
-                "Commission %": st.column_config.NumberColumn(format="%.2f%%", min_value=0, max_value=100,
-                                                              step=0.25, help="Rep's rate, or this deposit's override"),
-                "Commission": st.column_config.NumberColumn(format="dollar"),
-            })
-        old = table["Commission %"]
-        new = ed["Commission %"]
-        diff = ed[~((old == new) | (old.isna() & new.isna()))]
-        if not diff.empty:
-            for _, r in diff.iterrows():
-                rid = int(r["row_id"])
-                rate_val = r["Commission %"]
-                rep_rate = deps.loc[deps["row_id"] == rid, "rep_rate"].iloc[0]
-                if rate_val is None or pd.isna(rate_val) or (rep_rate is not None and float(rate_val) == rep_rate):
-                    sb.table("commission_overrides").delete().eq("row_id", rid).execute()
-                else:
-                    sb.table("commission_overrides").upsert({"row_id": rid, "rate": float(rate_val)}).execute()
+    with c2:
+        st.markdown("**Matching managers**")
+        st.caption("When a deposit's **Matching** box is ticked on the Commissions page, each manager here earns "
+                   "their % of its commissionable amount, except on their own sales.")
+        mgrs = load_commission_managers().sort_values(["manager", "effective_from"]).reset_index(drop=True)
+        mv = pd.DataFrame({"id": mgrs["id"], "Manager": mgrs["manager"], "Matching %": mgrs["rate"],
+                           "Starting": mgrs["effective_from"].map(lambda d: f"{d:%m/%d/%Y}"), "Remove": False})
+        med = st.data_editor(mv, hide_index=True, width="stretch", key=f"mgrs_{st.session_state.get('mgr_v', 0)}",
+                             column_order=["Manager", "Matching %", "Starting", "Remove"],
+                             disabled=["Manager", "Starting"],
+                             column_config={"Matching %": st.column_config.NumberColumn(format="%.2f%%", min_value=0,
+                                                                                        max_value=100, step=0.25),
+                                            "Remove": st.column_config.CheckboxColumn(width="small")})
+        mch, mrm = med[med["Matching %"] != mv["Matching %"]], med[med["Remove"]]
+        if not mch.empty or not mrm.empty:
+            for _, r in mch.iterrows():
+                sb.table("commission_managers").update({"rate": float(r["Matching %"] or 0)}).eq("id", int(r["id"])).execute()
+            for _, r in mrm.iterrows():
+                sb.table("commission_managers").delete().eq("id", int(r["id"])).execute()
             st.cache_data.clear()
-            st.session_state["ov_v"] = st.session_state.get("ov_v", 0) + 1
+            st.session_state["mgr_v"] = st.session_state.get("mgr_v", 0) + 1
             st.rerun()
-        if deps["overridden"].any():
-            st.caption("Overridden: " + ", ".join(
-                f"{r.company} ({r.deposit_date.month}/{r.deposit_date.day}) {r.pct:g}%"
-                for r in deps[deps["overridden"]].itertuples()))
-
-        summary = (deps.groupby("salesperson")
-                   .agg(Deposits=("row_id", "size"), Total=("deposit_amount", "sum"), Commission=("commission", "sum"))
-                   .reset_index().rename(columns={"salesperson": "Sales"}))
-        summary = pd.concat([summary, pd.DataFrame([{"Sales": "TOTAL", "Deposits": len(deps), "Total": total_dep,
-                                                     "Commission": total_comm}])], ignore_index=True)
-        with bottom_l:
-            st.markdown("**Week summary**")
-
-        def _sum_style(frame):
-            css = pd.DataFrame("", index=frame.index, columns=frame.columns)
-            css["Sales"] = "color: #d11a1a; font-weight: 700"
-            css.iloc[-1] = "background-color: #fff36b; font-weight: 700"
-            return css
-        with bottom_l:
-            st.dataframe(summary.style.apply(_sum_style, axis=None).format({"Total": "${:,.2f}",
-                                                                            "Commission": "${:,.2f}"}),
-                         hide_index=True, width="stretch")
-
-        export = table.drop(columns=["row_id"]).copy()
-        export = pd.concat([export, pd.DataFrame([{"Date": "TOTALS", "Deposit": total_dep, "Commissionable": total_base,
-                                                   "Commission %": round(total_comm / total_base * 100, 2)
-                                                   if total_base else None, "Commission": round(total_comm, 2)}])],
-                           ignore_index=True)
-        xlsx = commission_excel(export, summary, f"SALES COMMISSIONS · {when}")
-        if xlsx:
-            bottom_l.download_button("Download Excel", xlsx, file_name=f"commissions_{start}_{end}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               icon=":material/table_view:")
+        with st.expander("Add a manager"):
+            a1, a2 = st.columns(2)
+            new_m = a1.text_input("Name (as in the deposit report)", key="new_mgr").strip().upper()
+            new_r = a2.number_input("Matching %", min_value=0.0, max_value=100.0, value=3.0, step=0.25,
+                                    key="new_mgr_rate")
+            new_d = st.date_input("Starting", value=date.today(), format="MM/DD/YYYY", key="new_mgr_d")
+            if st.button("Add manager", disabled=not new_m):
+                sb.table("commission_managers").insert({"manager": new_m, "rate": new_r, "excludes": "",
+                                                        "effective_from": str(new_d)}).execute()
+                st.cache_data.clear()
+                st.rerun()
 
 
 # =====================================================================================
@@ -3011,6 +3189,8 @@ nav = st.navigation({
         st.Page(page_contacts, title="Contacts", icon=":material/contacts:", url_path="contacts"),
         st.Page(page_toll_routing, title="Toll Routing", icon=":material/alt_route:", url_path="toll-routing"),
         st.Page(page_toll_sources, title="Toll Sources", icon=":material/sell:", url_path="toll-sources"),
+        st.Page(page_assign_commissions, title="Assign Commissions", icon=":material/percent:",
+                url_path="assign-commissions"),
         st.Page(page_upload_calls, title="Upload Calls", icon=":material/upload_file:", url_path="upload-calls"),
         st.Page(page_upload_leads, title="Upload Leads", icon=":material/group_add:", url_path="upload-leads"),
     ],
