@@ -2668,7 +2668,7 @@ COMM_FIRST_WEEK = date(2026, 10, 12)       # Week 42 of 2026, first week synced
 COMM_PRESETS = ["This week", "Last week", "This month"]
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def load_deposits(start: date, end: date) -> pd.DataFrame:
     data = (sb.table("deposits").select("*").gte("deposit_date", str(start)).lte("deposit_date", str(end))
             .order("deposit_date").execute().data)
@@ -2729,7 +2729,7 @@ def load_commission_overrides() -> dict:
             sb.table("commission_overrides").select("row_id, rate").execute().data}
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def load_deposit_sync_time():
     data = sb.table("att_file_log").select("loaded_at").eq("file_name", "DEPOSIT REPORT").execute().data
     return pd.to_datetime(data[0]["loaded_at"]) if data else None
@@ -2846,11 +2846,45 @@ def load_commission_matching() -> set:
     return {int(r["row_id"]) for r in sb.table("commission_matching").select("row_id").execute().data}
 
 
+def _sync_state():
+    r = sb.table("sync_requests").select("*").eq("name", "deposits").execute().data
+    if not r:
+        return None, None
+    ts = lambda v: pd.to_datetime(v) if v else None  # noqa: E731
+    return ts(r[0].get("requested_at")), ts(r[0].get("done_at"))
+
+
+@st.fragment(run_every=5)
+def _sync_waiter():
+    """While a Refresh is pending, check every few seconds whether the PC has finished the sync."""
+    if not st.session_state.get("dep_sync_pending"):
+        return
+    asked, done = _sync_state()
+    if done is not None and asked is not None and done >= asked:
+        st.session_state["dep_sync_pending"] = False
+        st.cache_data.clear()
+        st.rerun(scope="app")
+    waited = (pd.Timestamp.now(tz="UTC") - asked).total_seconds() if asked is not None else 0
+    if waited > 150:
+        st.warning("Your PC hasn't picked up the refresh yet. Make sure it's on with the 'Sync Deposits' task set "
+                   "up, or double-click **Sync Deposits Now** in your Call Files folder.")
+    else:
+        st.info("Getting the latest from the deposit report on your PC… this usually takes under a minute.",
+                icon=":material/sync:")
+
+
 def page_commissions():
-    st.title("Commissions")
+    h1, h2 = st.columns([4, 1], vertical_alignment="bottom")
+    h1.title("Commissions")
+    if h2.button("Refresh", icon=":material/refresh:", width="stretch",
+                 help="Pull the latest saved changes from the NEW DEPOSIT REPORT on your PC"):
+        sb.table("sync_requests").upsert({"name": "deposits",
+                                          "requested_at": pd.Timestamp.now(tz="UTC").isoformat()}).execute()
+        st.session_state["dep_sync_pending"] = True
+    _sync_waiter()
     synced = load_deposit_sync_time()
     st.caption("Deposits from the NEW DEPOSIT REPORT, by broadcast week. Rates are set on **Manage → Assign "
-               "Commissions**. " + (f"Last synced {us_time(synced.tz_convert('America/Chicago'))}."
+               "Commissions**. " + (f"Last synced from the file {us_time(synced.tz_convert('America/Chicago'))}."
                                      if synced is not None else ""))
 
     st.session_state.setdefault("cm_preset", "Last week")
