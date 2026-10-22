@@ -2842,6 +2842,20 @@ def assign_rate_dialog(reps: list, rates: pd.DataFrame):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def load_commission_group() -> set:
+    return {int(r["row_id"]) for r in sb.table("commission_group").select("row_id").execute().data}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_group_multiplier() -> float:
+    r = sb.table("commission_settings").select("value").eq("name", "group_multiplier").execute().data
+    return float(r[0]["value"]) if r else 0.001666
+
+
+GROUP_PAYEE = "GROUP"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_commission_matching() -> set:
     return {int(r["row_id"]) for r in sb.table("commission_matching").select("row_id").execute().data}
 
@@ -2908,6 +2922,8 @@ def page_commissions():
     rates = load_commission_rates()
     overrides = load_commission_overrides()
     matching = load_commission_matching()
+    grouped = load_commission_group()
+    group_mult = load_group_multiplier()
     managers = load_commission_managers()
     rep_pick = f[2].multiselect("Salesperson", sorted(deps["salesperson"].dropna().unique()),
                                 placeholder="All salespeople", key="cm_reps")
@@ -2927,9 +2943,13 @@ def page_commissions():
     pct = [overrides.get(int(rid), rr) for rid, rr in zip(deps["row_id"], rep_rates)]
     deps = deps.assign(base=base, pct=pct, rep_rate=rep_rates,
                        overridden=[int(rid) in overrides for rid in deps["row_id"]],
-                       matching=[int(rid) in matching for rid in deps["row_id"]])
+                       matching=[int(rid) in matching for rid in deps["row_id"]],
+                       group=[int(rid) in grouped for rid in deps["row_id"]])
     deps["commission"] = (deps["base"].fillna(0) * deps["pct"].fillna(0) / 100).round(2)
     mgr_ov = manager_overrides(deps[deps["matching"]], managers)
+    grp = deps[deps["group"]].copy()
+    grp["group_pay"] = (grp["base"].fillna(0) * group_mult).round(2)
+    total_grp = float(grp["group_pay"].sum()) if not grp.empty else 0.0
 
     total_dep = float(deps["deposit_amount"].sum())
     total_base = float(deps["base"].fillna(0).sum())
@@ -2939,8 +2959,9 @@ def page_commissions():
         {"label": "Deposits", "value": f"{len(deps):,}", "note": when},
         {"label": "Total deposited", "value": f"${total_dep:,.0f}", "note": ""},
         {"label": "Commissionable", "value": f"${total_base:,.0f}", "note": ""},
-        {"label": "Total payouts", "value": f"${total_comm + total_mgr:,.2f}",
-         "note": f"${total_comm:,.2f} commissions + ${total_mgr:,.2f} matching", "alert": True},
+        {"label": "Total payouts", "value": f"${total_comm + total_mgr + total_grp:,.2f}",
+         "note": f"${total_comm:,.2f} commissions + ${total_mgr:,.2f} matching"
+                 + (f" + ${total_grp:,.2f} group" if total_grp else ""), "alert": True},
     ])
     missing = sorted(deps.loc[deps["pct"].isna(), "salesperson"].dropna().unique())
     if missing:
@@ -2963,15 +2984,17 @@ def page_commissions():
         "Commission %": deps["pct"],
         "Commission": deps["commission"],
         "Matching": deps["matching"],
+        "Group": deps["group"],
     })
     st.caption(f"Tick **Matching** to pay {mgr_names} {' / '.join(mgr_rates)} of that deposit's commissionable "
-               "amount (a manager never earns matching on their own sale). Change a **Commission %** to override "
+               f"amount (a manager never earns matching on their own sale). Tick **Group** to pay GROUP the "
+               f"commissionable amount × {group_mult:g}. Change a **Commission %** to override "
                "it for one deposit; clear it to go back to the rep's rate.")
     ed = st.data_editor(
         table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 620),
         key=f"comm_tbl_{start}_{end}_{'-'.join(rep_pick)}_{st.session_state.get('ov_v', 0)}",
         column_order=[c for c in table.columns if c != "row_id"],
-        disabled=[c for c in table.columns if c not in ("Commission %", "Matching")],
+        disabled=[c for c in table.columns if c not in ("Commission %", "Matching", "Group")],
         column_config={
             "Sales": st.column_config.TextColumn(width="small"),
             "Company": st.column_config.TextColumn(width="medium"),
@@ -2984,6 +3007,8 @@ def page_commissions():
             "Commission": st.column_config.NumberColumn(format="dollar"),
             "Matching": st.column_config.CheckboxColumn(
                 width="small", help=f"Pays {mgr_names} their matching % on this deposit"),
+            "Group": st.column_config.CheckboxColumn(
+                width="small", help=f"Pays GROUP this deposit's commissionable amount × {group_mult:g}"),
         })
     changed = False
     old, new = table["Commission %"], ed["Commission %"]
@@ -3003,6 +3028,13 @@ def page_commissions():
         else:
             sb.table("commission_matching").delete().eq("row_id", rid).execute()
         changed = True
+    for _, r in ed[ed["Group"] != table["Group"]].iterrows():
+        rid = int(r["row_id"])
+        if bool(r["Group"]):
+            sb.table("commission_group").upsert({"row_id": rid}).execute()
+        else:
+            sb.table("commission_group").delete().eq("row_id", rid).execute()
+        changed = True
     if changed:
         st.cache_data.clear()
         st.session_state["ov_v"] = st.session_state.get("ov_v", 0) + 1
@@ -3016,18 +3048,20 @@ def page_commissions():
     own = deps.groupby("salesperson").agg(Deposits=("row_id", "size"), Total=("deposit_amount", "sum"),
                                           Commission=("commission", "sum"))
     ovs = mgr_ov.groupby("manager")["override"].sum() if not mgr_ov.empty else pd.Series(dtype=float)
-    people = sorted(set(own.index) | set(ovs.index) | set(managers["manager"]))
+    people = sorted(set(own.index) | set(ovs.index) | set(managers["manager"]) | ({GROUP_PAYEE} if total_grp else set()))
     summary = pd.DataFrame({
         "Sales": people,
         "Deposits": [int(own["Deposits"].get(p, 0)) for p in people],
         "Total": [float(own["Total"].get(p, 0.0)) for p in people],
         "Commission": [round(float(own["Commission"].get(p, 0.0)), 2) for p in people],
         "Matching": [round(float(ovs.get(p, 0.0)), 2) for p in people],
+        "Group": [round(total_grp, 2) if p == GROUP_PAYEE else 0.0 for p in people],
     })
-    summary["Total Payout"] = (summary["Commission"] + summary["Matching"]).round(2)
+    summary["Total Payout"] = (summary["Commission"] + summary["Matching"] + summary["Group"]).round(2)
     summary = pd.concat([summary, pd.DataFrame([{
         "Sales": "TOTAL", "Deposits": len(deps), "Total": total_dep, "Commission": round(total_comm, 2),
-        "Matching": round(total_mgr, 2), "Total Payout": round(total_comm + total_mgr, 2)}])], ignore_index=True)
+        "Matching": round(total_mgr, 2), "Group": round(total_grp, 2),
+        "Total Payout": round(total_comm + total_mgr + total_grp, 2)}])], ignore_index=True)
 
     st.markdown("**Week summary**")
     sl, sr = st.columns([1.5, 1], gap="large")
@@ -3039,7 +3073,8 @@ def page_commissions():
         return css
     with sl:
         ev = st.dataframe(summary.style.apply(_sum_style, axis=None).format(
-            {"Total": "${:,.2f}", "Commission": "${:,.2f}", "Matching": "${:,.2f}", "Total Payout": "${:,.2f}"}),
+            {"Total": "${:,.2f}", "Commission": "${:,.2f}", "Matching": "${:,.2f}", "Group": "${:,.2f}",
+             "Total Payout": "${:,.2f}"}),
             hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
             key=f"comm_sum_{start}_{end}_{'-'.join(rep_pick)}")
         st.caption("Click a name to see what they're being paid for.")
@@ -3050,11 +3085,12 @@ def page_commissions():
             if not person:
                 st.caption("Click a name in the Week summary to see each deposit they're paid on.")
             else:
-                _payout_box(person, deps, mgr_ov, summary, when)
+                _payout_box(person, deps, mgr_ov, summary, when, grp, group_mult)
 
     # ---------- export ----------
     export = table.drop(columns=["row_id"]).copy()
     export["Matching"] = export["Matching"].map(lambda m: "Yes" if m else "")
+    export["Group"] = export["Group"].map(lambda m: "Yes" if m else "")
     export = pd.concat([export, pd.DataFrame([{
         "Date": "TOTALS", "Deposit": total_dep, "Commissionable": total_base,
         "Commission %": round(total_comm / total_base * 100, 2) if total_base else None,
@@ -3066,6 +3102,12 @@ def page_commissions():
             "Manager": mgr_ov["manager"], "Sale by": mgr_ov["salesperson"], "Company": mgr_ov["company"],
             "Commissionable": mgr_ov["base"], "Matching %": mgr_ov["rate"], "Matching $": mgr_ov["override"],
         }).sort_values(["Manager", "Date"])
+    if not grp.empty:
+        g_rows = pd.DataFrame({
+            "Date": grp["deposit_date"].map(lambda d: f"{d.month}/{d.day}/{d:%y}"), "Manager": GROUP_PAYEE,
+            "Sale by": grp["salesperson"], "Company": grp["company"], "Commissionable": grp["base"],
+            "Matching %": group_mult * 100, "Matching $": grp["group_pay"]})
+        mo_export = g_rows if mo_export is None else pd.concat([mo_export, g_rows], ignore_index=True)
     xlsx = commission_excel(export, summary, f"SALES COMMISSIONS · {when}", mo_export)
     if xlsx:
         sl.download_button("Download Excel", xlsx, file_name=f"commissions_{start}_{end}.xlsx",
@@ -3073,7 +3115,8 @@ def page_commissions():
                            icon=":material/table_view:")
 
 
-def _payout_box(person: str, deps: pd.DataFrame, mgr_ov: pd.DataFrame, summary: pd.DataFrame, when: str):
+def _payout_box(person: str, deps: pd.DataFrame, mgr_ov: pd.DataFrame, summary: pd.DataFrame, when: str,
+                grp: pd.DataFrame = None, group_mult: float = 0.0):
     row = summary[summary["Sales"] == person].iloc[0]
     st.markdown(f"<div style='opacity:.6;font-size:.75rem;letter-spacing:.04em'>{esc(when.upper())}</div>"
                 f"<div style='font-size:1.35rem;font-weight:700;color:#d11a1a'>{esc(person)}</div>"
@@ -3096,6 +3139,14 @@ def _payout_box(person: str, deps: pd.DataFrame, mgr_ov: pd.DataFrame, summary: 
 
     if person == "TOTAL":
         st.caption("Click a person's name to see their details.")
+        return
+    if person == GROUP_PAYEE:
+        rows = [f"<div style='{line}'><span>{g.deposit_date.month}/{g.deposit_date.day}</span><span>{esc(g.company)}"
+                f" <span style='opacity:.6'>({esc(g.salesperson)})</span></span><span style='text-align:right'>"
+                f"${(0 if pd.isna(g.base) else g.base):,.2f}</span><span style='text-align:right'>×{group_mult:g}</span>"
+                f"<span style='text-align:right'><b>${g.group_pay:,.2f}</b></span></div>"
+                for g in (grp.itertuples() if grp is not None else [])]
+        _block("Group", rows, float(row["Group"]))
         return
     mine = deps[deps["salesperson"] == person]
     rows = [f"<div style='{line}'><span>{d.deposit_date.month}/{d.deposit_date.day}</span><span>{esc(d.company)}"
@@ -3174,6 +3225,15 @@ def page_assign_commissions():
                 sb.table("commission_managers").delete().eq("id", int(r["id"])).execute()
             st.cache_data.clear()
             st.session_state["mgr_v"] = st.session_state.get("mgr_v", 0) + 1
+            st.rerun()
+        st.markdown("**Group**")
+        cur_mult = load_group_multiplier()
+        g1, g2 = st.columns([2, 1], vertical_alignment="bottom")
+        new_mult = g1.number_input("Group multiplier", value=cur_mult, min_value=0.0, step=0.0001, format="%.6f",
+                                   help="A deposit ticked Group pays GROUP its commissionable amount × this number")
+        if g2.button("Save", key="save_group_mult", disabled=new_mult == cur_mult):
+            sb.table("commission_settings").upsert({"name": "group_multiplier", "value": new_mult}).execute()
+            st.cache_data.clear()
             st.rerun()
         with st.expander("Add a manager"):
             a1, a2 = st.columns(2)
