@@ -3118,7 +3118,7 @@ def _email_button(where, deps: pd.DataFrame, managers: pd.DataFrame, group_mult:
     except Exception as e:
         where.button("Email Tony", icon=":material/mail:", width="stretch", disabled=True, help=f"Couldn't build: {e}")
         return
-    where.download_button(f"Email Week {wk} to Tony", eml, file_name=f"Week {wk} Breakdown - email to Tony.eml",
+    where.download_button(f"Email Week {wk}", eml, file_name=f"Week {wk} Breakdown - email to Tony.eml",
                           mime="message/rfc822", icon=":material/mail:", width="stretch",
                           help=f"Downloads a new email to {REPORT_TO} with the Week {wk} Breakdown attached. "
                                "Open the download and it opens in Outlook ready to send.")
