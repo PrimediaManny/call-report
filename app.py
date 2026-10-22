@@ -2435,10 +2435,18 @@ def _calls_tab():
         st.info("No calls match these filters.")
         return
 
-    view = view.sort_values("Date/Time", ascending=False).reset_index(drop=True)
+    # default order: Rep, Media Market, Lead Source, Lead ID (A-Z / low-high), then oldest call first
+    def _key(col: pd.Series) -> pd.Series:
+        if col.name == "Lead Id":
+            return pd.to_numeric(col, errors="coerce")          # "Not Found" goes last
+        if col.name == "Date/Time":
+            return col
+        return col.fillna("").astype(str).str.strip().str.lower().replace("", "\uffff")  # blanks last
+    view = view.sort_values(["From", "Media Market", "Lead Source", "Lead Id", "Date/Time"], key=_key,
+                            na_position="last", kind="stable").reset_index(drop=True)
     found = view["Lead Id"] != "Not Found"
     table = pd.DataFrame({
-        "Date": view["Date/Time"].map(us_time),
+        "Date": pd.to_datetime(view["Date/Time"]),
         "Rep": view["From"],
         "Duration": view["Duration"].map(_short_len),
         "Lead ID": view["Lead Id"].where(found, "Not in MMS"),
@@ -2457,7 +2465,7 @@ def _calls_tab():
                           height=min(38 + 35 * len(table), 640),
                           on_select="rerun", selection_mode="single-row",
                           key=f"cl_table_{start}_{end}_{rep}_{team}_{len(table)}",
-                          column_config={"Date": st.column_config.TextColumn(width=135),
+                          column_config={"Date": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=135),
                                          "Duration": st.column_config.TextColumn(width="small"),
                                          "Lead ID": st.column_config.TextColumn(width="small"),
                                          "Times Dialed": st.column_config.NumberColumn(
