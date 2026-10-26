@@ -1,6 +1,14 @@
-      [theme]
-      base = "light"
-      primaryColor = "#ff4b4b"
-      backgroundColor = "#ffffff"
-      secondaryBackgroundColor = "#f7f8fa"
-      textColor = "#1f2129"
+[theme]
+base = "light"
+primaryColor = "#1E4FD8"
+backgroundColor = "#F3F6FD"
+secondaryBackgroundColor = "#EEF3FF"
+textColor = "#111827"
+borderColor = "#E6EAF2"
+baseRadius = "10px"
+
+[theme.sidebar]
+backgroundColor = "#0B1F4D"
+secondaryBackgroundColor = "#16306B"
+textColor = "#D6DFF5"
+borderColor = "#1E3566"
