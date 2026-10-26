@@ -254,6 +254,26 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .pp-lines b { color: var(--pm-ink); }
 .pp-lines .tot b { color: #137A43; font-size: .92rem; }
 .pp-lines .warn { color: #B45309; }
+/* ---- lead drawer: details box + call timeline ---- */
+.dname { font-size: 1.45rem; font-weight: 700; color: var(--pm-navy); line-height: 1.25; margin: 2px 0 8px; }
+.dkv { display: grid; grid-template-columns: 105px 1fr; gap: 9px 12px; background: #F7F9FD; border: 1px solid var(--pm-line);
+       border-radius: 12px; padding: 14px 16px; margin: 14px 0 4px; font-size: .86rem; }
+.dkv span:nth-child(odd) { color: var(--pm-mute); }
+.dkv span:nth-child(even) { font-weight: 600; color: var(--pm-ink); text-align: right; overflow-wrap: anywhere; }
+.dsec { font-size: 1rem; font-weight: 700; color: var(--pm-ink); margin: 18px 0 10px; }
+.tl-row { display: grid; grid-template-columns: 16px 1fr auto; gap: 12px; position: relative; padding-bottom: 16px; }
+.tl-rail { position: relative; }
+.tl-rail i { position: absolute; left: 3px; top: 4px; width: 10px; height: 10px; border-radius: 50%;
+             background: var(--pm-blue); box-shadow: 0 0 0 3px var(--pm-light); }
+.tl-row:not(:last-child) .tl-rail::after { content: ""; position: absolute; left: 7px; top: 18px; bottom: -2px;
+             width: 2px; background: #D9E1F2; border-radius: 1px; }
+.tl-body b { display: block; font-size: .86rem; font-weight: 600; color: var(--pm-ink); line-height: 1.3; }
+.tl-body span { font-size: .78rem; color: var(--pm-mute); }
+.tl-len { font-size: .86rem; font-weight: 600; color: var(--pm-blue); }
+.tl-more { font-size: .78rem; color: var(--pm-mute); padding-left: 28px; }
+.rchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+.rchips span { background: var(--pm-light); color: var(--pm-ink); border-radius: 8px; padding: 4px 10px; font-size: .8rem; }
+.rchips b { color: var(--pm-blue); margin-right: 3px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -635,19 +655,17 @@ def lead_card(r, df: pd.DataFrame, inline: bool = False):
         how = "the caller's own lead" if r["Lead Choice"] == "Rep's lead" else "the most recently edited lead"
         warn = (f'<div class="lc-warn">⚑ This number matches <b>{n_leads} leads</b>. Showing {how} — '
                 f'use <b>Change lead</b> to pick the right one.</div>')
-    status = f'<span class="pillst">{esc(rec.get("Status"))}</span>' if rec.get("Status") else ""
     calls = df[df["To"] == r["To"]].sort_values("Date/Time", ascending=False)
-    call_rows = "".join(
-        f'<div class="mrow"><span>{us_time(c["Date/Time"])} · {esc(c["From"])}</span><span>{esc(c["Duration"])}</span></div>'
-        for _, c in calls.head(8).iterrows())
-    more = f'<div class="mrow muted">+ {len(calls) - 8} more</div>' if len(calls) > 8 else ""
+    confirmed = ('<span class="bd own">✓ Lead confirmed</span>'
+                 if n_leads <= 1 or r["Lead Choice"] == "Picked" else "")
+    src = (rec.get("Lead Source") or "").upper()
+    kv = "".join(f"<span>{k}</span><span>{v}</span>" for k, v in
+                 [("Contact", esc(rec.get("Contact Name (phase2)"))), ("Market", esc(rec.get("Media Market")))] if v) + kv
     st.markdown(
-        f'<div class="lc"><div class="lc-top"><div><div class="lc-id">LEAD {esc(lead_id)} · '
-        f'{esc((rec.get("Lead Source") or "").upper())}</div>'
-        f'<div class="lc-name">{esc(rec.get("Company In Ad") or rec.get("Company (phase2)") or "")}</div>'
-        f'<div class="lc-meta">{esc(" · ".join(x for x in [rec.get("Contact Name (phase2)"), rec.get("Media Market")] if x))}</div>'
-        f'</div>{status}</div>{warn}<div class="lc-kv">{kv}</div>'
-        f'<div class="mini"><h4>Calls to this number in this range ({len(calls)})</h4>{call_rows}{more}</div></div>',
+        f'<div class="lc-id">LEAD {esc(lead_id)}{" · " + esc(src) if src else ""}</div>'
+        f'<div class="dname">{esc(rec.get("Company In Ad") or rec.get("Company (phase2)") or "")}</div>'
+        f'<div class="bds">{_status_pill(rec.get("Status"))}{confirmed}</div>{warn}{f'<div class="dkv">{kv}</div>' if kv else ""}'
+        f'<div class="dsec">Calls to this number · {len(calls)}</div>{timeline_html(calls, 12)}',
         unsafe_allow_html=True)
     b1, b2 = st.columns(2)
     if b1.button("Open full lead", width="stretch", key=f"open_{lead_id}"):
@@ -2602,6 +2620,27 @@ def _short_len(d) -> str:
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
+def _tl_when(t) -> str:
+    try:
+        t = pd.to_datetime(t)
+        yr = f", {t.year}" if t.year != date.today().year else ""
+        return f"{t:%a %b} {t.day}{yr} · {(t.hour % 12) or 12}:{t:%M} {'AM' if t.hour < 12 else 'PM'}"
+    except Exception:
+        return str(t or "")
+
+
+def timeline_html(calls: pd.DataFrame, limit: int = 40) -> str:
+    """Calls as a timeline: blue dot + line, date and rep on the left, call length on the right."""
+    if calls is None or calls.empty:
+        return '<div class="tl-more" style="padding-left:0">No calls.</div>'
+    rows = "".join(
+        f'<div class="tl-row"><div class="tl-rail"><i></i></div><div class="tl-body"><b>{esc(_tl_when(h["Date/Time"]))}</b>'
+        f'<span>{esc(h["From"])}</span></div><div class="tl-len">{esc(_short_len(h["Duration"]))}</div></div>'
+        for _, h in calls.head(limit).iterrows())
+    more = f'<div class="tl-more">+ {len(calls) - limit} more</div>' if len(calls) > limit else ""
+    return f'<div class="tl">{rows}</div>{more}'
+
+
 def _cl_preset_changed():
     st.session_state["cl_week"] = None
 
@@ -2651,10 +2690,9 @@ def calls_to_lead_in_month(lead_id: str, month_start: date) -> pd.DataFrame:
 def _cl_lead_panel(r, calls: pd.DataFrame):
     call_day = r["Date/Time"].date() if pd.notna(r["Date/Time"]) else date.today()
     month_start = call_day.replace(day=1)
-    with st.container(border=True):
+    with st.container():
         if r["Lead Id"] == "Not Found":
-            st.markdown(f"<div style='opacity:.6;font-size:.8rem'>NOT IN MMS</div>"
-                        f"<div style='font-size:1.3rem;font-weight:700'>{esc(fmt_phone(r['To']))}</div>",
+            st.markdown(f"<div class='lc-id'>NOT IN MMS</div><div class='dname'>{esc(fmt_phone(r['To']))}</div>",
                         unsafe_allow_html=True)
             st.caption("This number isn't on any MMS lead.")
             same = calls[calls["To"] == r["To"]]
@@ -2664,10 +2702,9 @@ def _cl_lead_panel(r, calls: pd.DataFrame):
             rec = get_lead(str(r["Lead Id"])) or {}
             name = rec.get("Company In Ad") or rec.get("Company (phase2)") or r.get("Company In Ad") or ""
             src = rec.get("Lead Source") or ""
-            st.markdown(f"<div style='opacity:.6;font-size:.78rem;letter-spacing:.04em'>LEAD {esc(r['Lead Id'])}"
-                        f"{' · ' + esc(src.upper()) if src else ''}</div>"
-                        f"<div style='font-size:1.35rem;font-weight:700;line-height:1.25;margin:2px 0 6px'>"
-                        f"{esc(name)}</div>{_status_pill(rec.get('Status'))}", unsafe_allow_html=True)
+            st.markdown(f"<div class='lc-id'>LEAD {esc(r['Lead Id'])}{' · ' + esc(src.upper()) if src else ''}</div>"
+                        f"<div class='dname'>{esc(name)}</div><div class='bds'>{_status_pill(rec.get('Status'))}</div>",
+                        unsafe_allow_html=True)
 
             def _d(v):
                 try:
@@ -2683,23 +2720,12 @@ def _cl_lead_panel(r, calls: pd.DataFrame):
                     ("Lead started", _d(rec.get("Lead Started"))),
                     ("Last edited", _d(rec.get("Last Edited")))]
             kv = "".join(f"<span>{k}</span><span>{esc(v)}</span>" for k, v in rows if v)
-            st.markdown(f"<style>.clkv span:nth-child(odd){{opacity:.6}}</style><div class='clkv' style='display:grid;"
-                        f"grid-template-columns:105px 1fr;gap:6px 10px;margin:12px 0 4px;font-size:.9rem'>{kv}</div>",
-                        unsafe_allow_html=True)
+            if kv:
+                st.markdown(f"<div class='dkv'>{kv}</div>", unsafe_allow_html=True)
             hist = calls_to_lead_in_month(str(r["Lead Id"]), month_start)
             title = f"Calls to this lead in {month_start:%B}"
-        st.markdown(f"<div style='font-weight:700;margin:12px 0 4px;border-top:1px solid rgba(128,128,128,.2);"
-                    f"padding-top:10px'>{title} · {len(hist)}</div>", unsafe_allow_html=True)
-        if hist.empty:
-            st.caption("No calls.")
-        else:
-            lines = "".join(
-                f"<div style='display:grid;grid-template-columns:1.35fr 1fr .45fr;padding:5px 0;font-size:.85rem;"
-                f"border-bottom:1px dashed rgba(128,128,128,.25)'><span>{us_time(h['Date/Time'])}</span>"
-                f"<span>{esc(h['From'])}</span><span style='opacity:.6;text-align:right'>"
-                f"{esc(_short_len(h['Duration']))}</span></div>"
-                for _, h in hist.head(40).iterrows())
-            st.markdown(lines, unsafe_allow_html=True)
+        st.markdown(f"<div class='dsec'>{title} · {len(hist)}</div>{timeline_html(hist, 40)}",
+                    unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -2975,32 +3001,20 @@ def ld_drawer(r, lc: pd.DataFrame):
     st.markdown('<div class="pm-drawer"></div>', unsafe_allow_html=True)
     created = f" · CREATED {r['_sd'].month}/{r['_sd'].day}/{r['_sd']:%y}" if pd.notna(r["_sd"]) else ""
     src = str(r["lead_source"] or "").upper()
-    st.markdown(f"<div style='opacity:.6;font-size:.75rem;letter-spacing:.04em'>LEAD {esc(r['lead_id'])}"
-                f"{' · ' + esc(src) if src else ''}{created}</div>"
-                f"<div style='font-size:1.3rem;font-weight:700;line-height:1.25;margin:2px 0 6px'>"
-                f"{esc(r['company'] or '')}</div>{_status_pill(r['status'])}", unsafe_allow_html=True)
+    st.markdown(f"<div class='lc-id'>LEAD {esc(r['lead_id'])}{' · ' + esc(src) if src else ''}{created}</div>"
+                f"<div class='dname'>{esc(r['company'] or '')}</div><div class='bds'>{_status_pill(r['status'])}</div>",
+                unsafe_allow_html=True)
     kv = "".join(f"<span>{k}</span><span>{esc(v)}</span>" for k, v in
                  [("Contact", r["contact"]), ("Owner", r["owner"]), ("Market", r["market"])]
                  if v and not (isinstance(v, float) and pd.isna(v)))
-    st.markdown(f"<style>.clkv span:nth-child(odd){{opacity:.6}}</style><div class='clkv' style='display:grid;"
-                f"grid-template-columns:90px 1fr;gap:6px 10px;margin:12px 0 6px;font-size:.9rem'>{kv}</div>",
-                unsafe_allow_html=True)
+    if kv:
+        st.markdown(f"<div class='dkv'>{kv}</div>", unsafe_allow_html=True)
     if not lc.empty:
-        chips = "".join(f"<span style='background:rgba(128,128,128,.12);border-radius:8px;padding:5px 10px;"
-                        f"margin:0 6px 6px 0;display:inline-block;font-size:.85rem'><b>{n}</b> {esc(rep)}</span>"
-                        for rep, n in lc["From"].value_counts().items())
-        st.markdown(f"<div style='margin:4px 0'>{chips}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div style='font-weight:700;margin:10px 0 4px;border-top:1px solid rgba(128,128,128,.2);"
-                f"padding-top:10px'>Every call since it was created · {len(lc)}</div>", unsafe_allow_html=True)
-    if lc.empty:
-        st.caption("No calls yet.")
-    else:
-        st.markdown("".join(
-            f"<div style='display:grid;grid-template-columns:1.35fr 1fr .45fr;padding:5px 0;font-size:.85rem;"
-            f"border-bottom:1px dashed rgba(128,128,128,.25)'><span>{us_time(h['Date/Time'])}</span>"
-            f"<span>{esc(h['From'])}</span><span style='opacity:.6;text-align:right'>"
-            f"{esc(_short_len(h['Duration']))}</span></div>" for _, h in lc.head(60).iterrows()),
-            unsafe_allow_html=True)
+        chips = "".join(f"<span><b>{n}</b>{esc(rep)}</span>" for rep, n in lc["From"].value_counts().items())
+        st.markdown(f"<div class='rchips'>{chips}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='dsec'>Every call since it was created · {len(lc)}</div>"
+                f"{timeline_html(lc, 60) if not lc.empty else '<div class=tl-more style=padding-left:0>No calls yet.</div>'}",
+                unsafe_allow_html=True)
 
 
 # =====================================================================================
