@@ -256,7 +256,7 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .pp-lines .warn { color: #B45309; }
 /* ---- lead drawer: details box + call timeline ---- */
 .dname { font-size: 1.45rem; font-weight: 700; color: var(--pm-navy); line-height: 1.25; margin: 2px 0 8px; }
-.dkv { display: grid; grid-template-columns: 105px 1fr; gap: 9px 12px; background: #F7F9FD; border: 1px solid var(--pm-line);
+.dkv { display: grid; grid-template-columns: 125px 1fr; gap: 9px 12px; background: #F7F9FD; border: 1px solid var(--pm-line);
        border-radius: 12px; padding: 14px 16px; margin: 14px 0 4px; font-size: .86rem; }
 .dkv span:nth-child(odd) { color: var(--pm-mute); }
 .dkv span:nth-child(even) { font-weight: 600; color: var(--pm-ink); text-align: right; overflow-wrap: anywhere; }
@@ -2687,6 +2687,41 @@ def calls_to_lead_in_month(lead_id: str, month_start: date) -> pd.DataFrame:
     return apply_rep_names(df).sort_values("Date/Time", ascending=False) if not df.empty else df
 
 
+def _toggle(key: str):
+    st.session_state[key] = not st.session_state.get(key, False)
+
+
+def full_lead_button(lead_id: str, tag: str):
+    """'Open full lead' under the call timeline: shows every MMS field for the lead, grouped."""
+    k = f"full_{tag}_{lead_id}"
+    shown = st.session_state.get(k, False)
+    st.button("Hide full lead" if shown else "Open full lead", key=f"btn_{k}", width="stretch",
+              type="secondary" if shown else "primary",
+              icon=":material/expand_less:" if shown else ":material/description:", on_click=_toggle, args=(k,))
+    if not shown:
+        return
+    rec = get_lead(str(lead_id)) or {}
+    if not rec:
+        st.caption("This lead isn't in MMS any more.")
+        return
+    parts = []
+    for title, fields in DETAIL_GROUPS.items():
+        def _val(f, v):
+            if "Phone" in f:
+                return fmt_phone(v)
+            if any(w in f for w in ("Started", "Edited", "Completed")) and f != "Started By":
+                return _short_date(v)
+            return v
+        rows = "".join(f"<span>{esc(f.replace(' (phase2)', '').replace(' (phase3)', ''))}</span>"
+                       f"<span>{esc(_val(f, rec.get(f)))}</span>" for f in fields if rec.get(f) not in (None, ""))
+        if rows:
+            parts.append(f"<div class='dsec'>{title}</div><div class='dkv'>{rows}</div>")
+    if rec.get("Phase2 Comments"):
+        parts.append(f"<div class='dsec'>Comments</div><div class='dkv' style='display:block;font-weight:400'>"
+                     f"{esc(rec.get('Phase2 Comments'))}</div>")
+    st.markdown("".join(parts) or "<span class='tl-more'>Nothing recorded</span>", unsafe_allow_html=True)
+
+
 def _cl_lead_panel(r, calls: pd.DataFrame):
     call_day = r["Date/Time"].date() if pd.notna(r["Date/Time"]) else date.today()
     month_start = call_day.replace(day=1)
@@ -2726,6 +2761,8 @@ def _cl_lead_panel(r, calls: pd.DataFrame):
             title = f"Calls to this lead in {month_start:%B}"
         st.markdown(f"<div class='dsec'>{title} · {len(hist)}</div>{timeline_html(hist, 40)}",
                     unsafe_allow_html=True)
+    if r["Lead Id"] != "Not Found":
+        full_lead_button(str(r["Lead Id"]), "cl")
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -2790,7 +2827,8 @@ def _calls_tab():
     if st.session_state.get("cl_rep") not in reps:
         st.session_state["cl_rep"] = ALL_REPS_CL
     st.pills("Rep", reps, key="cl_rep", selection_mode="single", label_visibility="collapsed",
-             format_func=lambda r: f"{r}  {len(view):,}" if r == ALL_REPS_CL else f"{r}  {int(counts[r]):,}")
+             format_func=lambda r: (f"{team if team != EVERYONE else ALL_REPS_CL}  {len(view):,}" if r == ALL_REPS_CL
+                                    else f"{r}  {int(counts[r]):,}"))
     rep = st.session_state.get("cl_rep") or ALL_REPS_CL
     if rep != ALL_REPS_CL:
         view = view[view["From"].astype(str) == rep]
@@ -3015,6 +3053,7 @@ def ld_drawer(r, lc: pd.DataFrame):
     st.markdown(f"<div class='dsec'>Every call since it was created · {len(lc)}</div>"
                 f"{timeline_html(lc, 60) if not lc.empty else '<div class=tl-more style=padding-left:0>No calls yet.</div>'}",
                 unsafe_allow_html=True)
+    full_lead_button(str(r["lead_id"]), "ld")
 
 
 # =====================================================================================
