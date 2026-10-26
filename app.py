@@ -176,6 +176,84 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
               border-radius: 999px; padding: 5px 12px; font-size: .75rem; font-weight: 500; }
 .pm-top .upd { color: #9FB3E0; font-size: .75rem; }
 .pm-top .upd .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #34D399; margin-right: 6px; }
+/* ---- shared top bar ---- */
+.st-key-pm_topbar { background: rgba(255,255,255,.6); border: 1px solid #fff; border-radius: 14px; padding: 8px 12px;
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: 0 8px 24px rgba(30,79,216,.08);
+  margin: -.6rem 0 .9rem 0; }
+.st-key-pm_topbar [data-testid="stTextInputRootElement"], .st-key-pm_topbar [data-baseweb="select"] > div {
+  background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(238,243,255,.75)); border-color: #fff; border-radius: 10px; }
+.st-key-g_prev button, .st-key-g_next button { font-size: 1.15rem; font-weight: 700; color: var(--pm-blue) !important; padding: 0 !important; }
+.st-key-pm_topbar [data-testid="stButtonGroup"] { flex-wrap: nowrap; }
+.st-key-pm_topbar [data-testid="stButtonGroup"] button { padding: .3rem .62rem !important; min-height: 2.35rem; }
+.st-key-pm_topbar [data-testid="stButtonGroup"] button p { font-size: .84rem !important; white-space: nowrap; }
+/* week-over-week change */
+.dl { display: inline-block; font-size: .72rem; font-weight: 700; border-radius: 6px; padding: 2px 7px; margin-left: 10px;
+      vertical-align: middle; letter-spacing: 0; line-height: 1.5; background: #F1F1F3; color: #5F6168; }
+.dl.up { background: #E3F6EA; color: #137A43; }
+.dl.down { background: #FDECEA; color: #C0392B; }
+/* card headers */
+.card-h { font-size: 1rem; font-weight: 700; color: var(--pm-ink); margin: 0 0 6px 0; display: flex;
+          justify-content: space-between; align-items: baseline; gap: 8px; }
+.card-h span { font-size: .78rem; font-weight: 400; color: var(--pm-mute); }
+.st-key-pm_chart, .st-key-pm_board, .st-key-nr_queue, .st-key-nr_pick { background: #fff; border-radius: 16px !important; }
+/* rep board */
+.rb-row { display: grid; grid-template-columns: 34px 1fr auto 58px; gap: 12px; align-items: center; padding: 7px 0; }
+.rb-av { width: 34px; height: 34px; border-radius: 50%; background: var(--pm-light); color: var(--pm-blue); font-weight: 700;
+         font-size: .72rem; display: flex; align-items: center; justify-content: center; }
+.rb-row.on .rb-av { background: var(--pm-blue); color: #fff; }
+.rb-name { font-size: .84rem; font-weight: 600; color: var(--pm-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-talk { font-weight: 400; color: var(--pm-mute); font-size: .72rem; margin-top: 3px; }
+.rb-bar { height: 6px; background: var(--pm-light); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.rb-bar i { display: block; height: 100%; border-radius: 3px; }
+.rb-n { font-size: 1rem; font-weight: 700; color: var(--pm-navy); text-align: right; }
+.rb-row .dl { margin-left: 0; }
+.rb-more { font-size: .78rem; color: var(--pm-mute); padding-top: 4px; }
+/* Needs Review */
+.nr-sum { display: flex; gap: 28px; align-items: baseline; background: #fff; border: 1px solid var(--pm-line);
+          border-radius: 14px; padding: 12px 18px; margin: .2rem 0 .9rem 0; color: var(--pm-mute); font-size: .88rem; }
+.nr-sum b { font-size: 1.35rem; color: var(--pm-navy); margin-right: 4px; }
+.nr-sum .sp { flex: 1; }
+.nr-title { font-size: 1.3rem; font-weight: 700; color: var(--pm-navy); margin-bottom: -4px; }
+.st-key-nr_queue [data-testid="stRadioGroup"] { gap: 2px; width: 100%; }
+.st-key-nr_queue [data-testid="stRadioGroup"] > div { width: 100%; }
+.st-key-nr_queue [data-testid="stRadioOption"] { width: 100%; padding: 9px 12px; border-radius: 10px; margin: 0; cursor: pointer; }
+.st-key-nr_queue [data-testid="stRadioOption"] > div > div:first-child { display: none; }
+.st-key-nr_queue [data-testid="stRadioOption"]:hover { background: #F6F8FC; }
+.st-key-nr_queue [data-testid="stRadioOption"][data-selected="true"] {
+  background: linear-gradient(90deg, rgba(220,230,255,.95), rgba(238,243,255,.6)); box-shadow: inset 3px 0 0 var(--pm-blue); }
+.st-key-nr_queue [data-testid="stRadioOption"] p { font-size: .8rem; color: var(--pm-mute); line-height: 1.5; margin: 0; }
+.st-key-nr_queue [data-testid="stRadioOption"] p strong { color: var(--pm-ink); font-size: .93rem; font-weight: 600; }
+[class*="st-key-nr_c"] { background: #fff; border-radius: 14px !important; }
+[class*="st-key-nr_c_sug"] { border: 1.5px solid #5B83F2 !important; box-shadow: 0 10px 24px -8px rgba(30,79,216,.28); }
+.nr-card .lc-name { font-size: 1.05rem; margin: 2px 0 6px 0; }
+.bds { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.bd { font-size: .7rem; font-weight: 700; border-radius: 6px; padding: 2px 7px; }
+.bd.sug { background: var(--pm-blue); color: #fff; }
+.bd.own { background: #E3F6EA; color: #137A43; }
+.bd.new { background: var(--pm-light); color: var(--pm-blue); }
+.bd.old { background: #F1F1F3; color: #5F6168; }
+.nr-kv { display: grid; gap: 7px; margin: 12px 0 4px 0; }
+.nr-kv div { display: flex; flex-direction: column; }
+.nr-kv span { font-size: .7rem; color: var(--pm-mute); }
+.nr-kv b { font-size: .84rem; font-weight: 600; color: var(--pm-ink); }
+/* Commissions */
+.kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.st-key-pm_email { background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(233,239,255,.9)); border-radius: 14px !important;
+                   border-color: #A9C1FF !important; margin-top: .4rem; }
+.em-h { font-size: .82rem; color: var(--pm-blue); font-weight: 600; }
+.em-t { font-size: 1rem; color: var(--pm-navy); font-weight: 700; margin-bottom: 2px; }
+.pp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin: .3rem 0 1rem 0; }
+.pp { background: #fff; border: 1px solid var(--pm-line); border-radius: 14px; padding: 14px 16px; }
+.pp-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.pp-name { font-weight: 700; color: var(--pm-navy); font-size: .92rem; }
+.pp-cnt { font-size: .7rem; font-weight: 700; background: var(--pm-light); color: var(--pm-blue); border-radius: 6px; padding: 2px 7px; }
+.pp-amt { font-size: 1.45rem; font-weight: 700; color: var(--pm-ink); margin-top: 6px; letter-spacing: -.01em; }
+.pp-sub { font-size: .76rem; color: var(--pm-mute); }
+.pp-lines { border-top: 1px solid var(--pm-line); margin-top: 10px; padding-top: 8px; display: grid; gap: 4px; font-size: .8rem; }
+.pp-lines div { display: flex; justify-content: space-between; color: var(--pm-mute); }
+.pp-lines b { color: var(--pm-ink); }
+.pp-lines .tot b { color: #137A43; font-size: .92rem; }
+.pp-lines .warn { color: #B45309; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -529,8 +607,8 @@ def kpi_cards(cards: list):
     st.markdown(f'<div class="kpis">{html_cards}</div>', unsafe_allow_html=True)
 
 
-def lead_card(r, df: pd.DataFrame):
-    """Right-hand panel for the selected call."""
+def lead_card(r, df: pd.DataFrame, inline: bool = False):
+    """Lead details for the selected call (shown in the side drawer)."""
     number = str(r["To"])
     if r["Lead Id"] == "Not Found":
         st.markdown(f'<div class="lc"><div class="lc-id">NO MMS LEAD FOUND</div>'
@@ -577,7 +655,159 @@ def lead_card(r, df: pd.DataFrame):
         st.switch_page(PAGE_LEAD_SEARCH)
     if b2.button("Change lead", width="stretch", key=f"chg_{r['call_id']}", disabled=n_leads < 2,
                  help=None if n_leads >= 2 else "This number only matches one lead"):
-        pick_lead_dialog(number, lead_id, str(r["Lead Choice"]))
+        if inline:
+            st.session_state["chg_open"] = None if st.session_state.get("chg_open") == r["call_id"] else r["call_id"]
+        else:
+            pick_lead_dialog(number, lead_id, str(r["Lead Choice"]))
+    if inline and st.session_state.get("chg_open") == r["call_id"]:
+        st.markdown(f"**{fmt_phone(number)}** matches {n_leads} leads. Click the right one, then **Use lead** — "
+                    "it applies to every call to this number.")
+        render_pick(number, lead_id, str(r["Lead Choice"]), "drw")
+
+
+REP_COLORS = ["#1E4FD8", "#5B83F2", "#A9C1FF", "#0B1F4D", "#7C93C9", "#3B5BA9", "#C9D6F5", "#94A3B8",
+              "#64748B", "#CBD5E1", "#1E3A8A", "#93C5FD"]
+
+
+def prev_range(start: date, end: date) -> tuple:
+    """The period to compare against: same days last week (up to a week), same days of last month
+    (month to date), otherwise the same number of days just before."""
+    n = (end - start).days + 1
+    if start.day == 1 and n > 7:
+        pe = start - timedelta(days=1)
+        ps = pe.replace(day=1)
+        return ps, min(ps + timedelta(days=n - 1), pe), "last month"
+    if n <= 7:
+        return start - timedelta(days=7), end - timedelta(days=7), ("same day last week" if n == 1 else "last week")
+    return start - timedelta(days=n), start - timedelta(days=1), "the previous period"
+
+
+def delta_html(cur: float, prev: float) -> str:
+    if not prev:
+        return ""
+    pct = round((cur - prev) / prev * 100)
+    cls, arrow = ("up", "▲") if pct > 0 else ("down", "▼") if pct < 0 else ("flat", "•")
+    return f'<span class="dl {cls}">{arrow} {abs(pct)}%</span>'
+
+
+def _cr_prep(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    df = apply_rep_names(df)
+    df["Times Called"] = df.groupby("To")["To"].transform("count").astype(int)
+    df["Leads Matched"] = pd.to_numeric(df["Leads Matched"], errors="coerce").fillna(0).astype(int)
+    return df
+
+
+def _cr_filter(df: pd.DataFrame, direction: str, show: str, reps=None) -> pd.DataFrame:
+    if df.empty:
+        return df
+    v = df
+    if reps is not None:
+        v = v[v["From"].astype(str).isin(reps)]
+    if direction != "All":
+        v = v[v["Direction"].fillna("").str.lower() == DIRECTIONS[direction]]
+    needs = (v["Leads Matched"] >= 2) & (v["Lead Choice"] != "Picked")
+    if show == "Matched":
+        v = v[v["Lead Id"] != "Not Found"]
+    elif show == "Not found":
+        v = v[v["Lead Id"] == "Not Found"]
+    elif show == "Needs pick":
+        v = v[needs]
+    return v
+
+
+def rep_order(v: pd.DataFrame) -> list:
+    return list(v["From"].fillna("Unknown").astype(str).value_counts().index) if not v.empty else []
+
+
+def calls_chart(v: pd.DataFrame, start: date, end: date, order: list, title: str = "Calls by day"):
+    """Stacked bars of calls per day (per hour for a single day), one color per rep."""
+    import altair as alt
+    import json
+    single = start == end
+    head = "Calls by hour" if single else title
+    st.markdown(f'<div class="card-h">{head}<span>{plural(len(v), "call")}</span></div>', unsafe_allow_html=True)
+    if v.empty:
+        st.caption("No calls in this range.")
+        return
+    d = v.assign(_rep=v["From"].fillna("Unknown").astype(str))
+    if single:
+        d["_k"] = d["Date/Time"].dt.hour
+        keys = list(range(min(8, int(d["_k"].min())), max(18, int(d["_k"].max())) + 1))
+        label = {h: f"{(h % 12) or 12} {'AM' if h < 12 else 'PM'}" for h in keys}
+    else:
+        d["_k"] = d["Date/Time"].dt.date
+        days = (end - start).days + 1
+        keys = [start + timedelta(days=i) for i in range(days)] if days <= 62 else sorted(d["_k"].unique())
+        label = {k: (f"{k:%a} {k.month}/{k.day}" if days <= 14 else f"{k.month}/{k.day}") for k in keys}
+    agg = d.groupby(["_k", "_rep"]).size().reset_index(name="Calls")
+    agg["Day"] = agg["_k"].map(label)
+    tot = agg.groupby("Day", as_index=False)["Calls"].sum()
+    tot = pd.concat([tot, pd.DataFrame({"Day": [label[k] for k in keys if label[k] not in set(tot["Day"])],
+                                        "Calls": 0})], ignore_index=True)
+    xorder = [label[k] for k in keys]
+    reps = [r for r in order if r in set(agg["_rep"])]
+    colors = (REP_COLORS * 3)[:len(reps)]
+    x = alt.X("Day:N", sort=xorder, title=None, axis=alt.Axis(labelAngle=0, labelColor="#6B7280", labelFont="Inter",
+                                                              labelFontSize=11, domain=False, ticks=False))
+    bars = alt.Chart(agg).mark_bar(cornerRadius=3, size=min(46, max(8, 520 // max(len(keys), 1)))).encode(
+        x=x, y=alt.Y("Calls:Q", axis=None, stack="zero"),
+        color=alt.Color("_rep:N", sort=reps, scale=alt.Scale(domain=reps, range=colors),
+                        legend=alt.Legend(orient="top", title=None, labelFont="Inter", labelColor="#6B7280",
+                                          symbolType="square", columns=6)),
+        order=alt.Order("rank:Q"),
+        tooltip=[alt.Tooltip("Day:N", title="Day"), alt.Tooltip("_rep:N", title="Rep"), "Calls:Q"]
+    ).transform_calculate(rank=f"indexof({json.dumps(reps)}, datum._rep)")
+    labels = alt.Chart(tot).mark_text(dy=-8, font="Inter", fontWeight=600, fontSize=11, color="#111827").encode(
+        x=alt.X("Day:N", sort=xorder), y=alt.Y("Calls:Q", axis=None), text=alt.Text("Calls:Q"))
+    chart = (bars + labels).properties(height=230).configure_view(stroke=None).configure_axis(grid=False)
+    st.altair_chart(chart, width="stretch", theme=None)
+
+
+def rep_board(v: pd.DataFrame, pv: pd.DataFrame, order: list, picked: str, cmp_label: str):
+    """Rep leaderboard: calls, talk time and change vs the comparison period."""
+    st.markdown(f'<div class="card-h">Reps<span>calls · vs {esc(cmp_label)}</span></div>', unsafe_allow_html=True)
+    if v.empty:
+        st.caption("No calls in this range.")
+        return
+    reps = v["From"].fillna("Unknown").astype(str)
+    g = pd.DataFrame({"n": reps.value_counts()})
+    g["secs"] = v.assign(_r=reps, _s=v["Duration"].map(dur_seconds)).groupby("_r")["_s"].sum()
+    prev = (pv["From"].fillna("Unknown").astype(str).value_counts() if not pv.empty else pd.Series(dtype=int))
+    top = int(g["n"].max())
+    rows = []
+    for i, (name, r) in enumerate(g.head(8).iterrows()):
+        color = (REP_COLORS * 3)[order.index(name)] if name in order else REP_COLORS[0]
+        ini = "".join(w[0] for w in name.split()[:2]).upper() or "?"
+        p = int(prev.get(name, 0))
+        rows.append(
+            f'<div class="rb-row{" on" if name == picked else ""}"><div class="rb-av">{esc(ini)}</div>'
+            f'<div style="min-width:0"><div class="rb-name">{esc(name)}</div>'
+            f'<div class="rb-bar"><i style="width:{max(3, round(100 * r["n"] / top))}%;background:{color}"></i></div>'
+            f'<div class="rb-talk">{fmt_total(int(r["secs"]))} talk time</div></div>'
+            f'<div class="rb-n">{int(r["n"]):,}</div><div>{delta_html(r["n"], p) or "<span class=dl>new</span>"}</div></div>')
+    more = f'<div class="rb-more">+ {len(g) - 8} more reps</div>' if len(g) > 8 else ""
+    st.markdown("".join(rows) + more, unsafe_allow_html=True)
+
+
+@st.dialog("Lead", width="medium", position="right")
+def lead_drawer(r, df: pd.DataFrame):
+    st.markdown('<div class="pm-drawer"></div>', unsafe_allow_html=True)
+    lead_card(r, df, inline=True)
+
+
+def drawer_trigger(tag: str, ident) -> bool:
+    """True once each time a different row is selected, so the drawer opens on a click
+    and stays closed after the person closes it."""
+    k = f"_drawer_{tag}"
+    if ident is None:
+        st.session_state[k] = None
+        return False
+    if st.session_state.get(k) != ident:
+        st.session_state[k] = ident
+        return True
+    return False
 
 
 def page_call_report():
@@ -585,19 +815,17 @@ def page_call_report():
         st.session_state.setdefault(k, v)
     st.session_state.setdefault("applied", _filter_defaults())
     a = {**_filter_defaults(), **st.session_state["applied"]}
-    start, end = _date_range(a["f_preset"], a["f_dates"])
+    start, end = g_range()
     sources = a["f_sources"] or []
     started_from = a["f_started_from"]
     direction = a["f_direction"] or "All"
     show = a["f_show"] or "All"
+    team_reps = g_team_reps()
 
-    df = load_calls(start, end, tuple(sorted(sources)), started_from)
-    if not df.empty:
-        df = apply_rep_names(df)
-        df["Times Called"] = df.groupby("To")["To"].transform("count").astype(int)
-        df["Leads Matched"] = pd.to_numeric(df["Leads Matched"], errors="coerce").fillna(0).astype(int)
+    df = _cr_prep(load_calls(start, end, tuple(sorted(sources)), started_from))
+    ps, pe, cmp_label = prev_range(start, end)
+    pdf = _cr_prep(load_calls(ps, pe, tuple(sorted(sources)), started_from))
 
-    # Lead Source dropdown only lists sources of leads matched to calls in the applied date range.
     try:
         source_options = load_range_sources(start, end, started_from)
     except Exception:
@@ -608,73 +836,24 @@ def page_call_report():
     h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
     with h1:
         st.title("Call Report")
-        st.caption("Every call, matched to its MMS lead. Set filters, then **Apply filters**.")
+        st.caption(f"Every call for **{esc(g_when())}**, matched to its MMS lead")
     dl_slot = h2.container()
 
-    # ---------- filter bar ----------
+    # ---------- lead filters (dates and team are in the bar at the top) ----------
     with st.form("call_filters"):
-        r1 = st.columns([2.4, 1.5, 1.2])
-        r1[0].segmented_control("Dates", DATE_PRESETS, key="f_preset")
-        r1[1].date_input("Custom range", key="f_dates", format="MM/DD/YYYY",
-                         help="Used when Dates is set to Custom")
-        r1[2].segmented_control("Direction", list(DIRECTIONS), key="f_direction")
-        r2 = st.columns([2.4, 1.5, 3.0])
-        r2[0].multiselect("Lead Source", source_options, key="f_sources", placeholder="All sources",
-                          help="Only match calls to MMS leads from these sources. Lists the sources "
-                               "found for the applied date range.")
-        r2[1].date_input("Lead started from", key="f_started_from", format="MM/DD/YYYY",
-                         help="Only match calls to MMS leads started on or after this date")
-        r2[2].segmented_control("Show", SHOW_OPTIONS, key="f_show")
-        r3 = st.columns([4.6, 1, 1.3], vertical_alignment="bottom")
-        r3[1].form_submit_button("Reset", width="stretch", on_click=_reset_filters)
-        r3[2].form_submit_button("Apply filters", type="primary", icon=":material/filter_alt:",
-                                 width="stretch", on_click=_apply_filters)
+        r = st.columns([2.5, 1.45, 1.35, 2.6, .9, 1.25], vertical_alignment="bottom")
+        r[0].multiselect("Lead Source", source_options, key="f_sources", placeholder="All sources",
+                         help="Only match calls to MMS leads from these sources")
+        r[1].date_input("Lead started from", key="f_started_from", format="MM/DD/YYYY",
+                        help="Only match calls to MMS leads started on or after this date")
+        r[2].segmented_control("Direction", list(DIRECTIONS), key="f_direction")
+        r[3].segmented_control("Show", SHOW_OPTIONS, key="f_show")
+        r[4].form_submit_button("Reset", width="stretch", on_click=_reset_filters)
+        r[5].form_submit_button("Apply", type="primary", icon=":material/filter_alt:", width="stretch",
+                                on_click=_apply_filters)
     err = st.session_state.pop("apply_error", None)
     if err:
         st.warning(err)
-
-    # ---------- calls for the applied filters (before picking a rep) ----------
-    pre = df.copy()
-    if not pre.empty:
-        if direction != "All":
-            pre = pre[pre["Direction"].fillna("").str.lower() == DIRECTIONS[direction]]
-        needs_pre = (pre["Leads Matched"] >= 2) & (pre["Lead Choice"] != "Picked")
-        if show == "Matched":
-            pre = pre[pre["Lead Id"] != "Not Found"]
-        elif show == "Not found":
-            pre = pre[pre["Lead Id"] == "Not Found"]
-        elif show == "Needs pick":
-            pre = pre[needs_pre.reindex(pre.index, fill_value=False)]
-
-    # ---------- rep buttons: only reps with calls under the applied filters ----------
-    rep_counts = (pre["From"].dropna().astype(str).value_counts() if not pre.empty
-                  else pd.Series(dtype=int))
-    rep_options = [ALL_REPS] + sorted(rep_counts.index, key=str.lower)
-    if st.session_state.get("rep_pick") not in rep_options:
-        st.session_state["rep_pick"] = ALL_REPS
-    if len(rep_options) > 1:
-        st.pills("Rep", rep_options, key="rep_pick", selection_mode="single",
-                 format_func=lambda r: f"{r}  ·  {len(pre):,}" if r == ALL_REPS
-                 else f"{r}  ·  {int(rep_counts[r]):,}",
-                 help="Reps with calls under the current filters. Click one to show only their calls.")
-    rep_pick = st.session_state.get("rep_pick") or ALL_REPS
-    froms = [] if rep_pick == ALL_REPS else [rep_pick]
-
-    # ---------- what's applied ----------
-    bits = [", ".join(froms) if froms else "All reps"]
-    if direction != "All":
-        bits.append("Outbound only" if direction == "Out" else "Inbound only")
-    if sources:
-        bits.append(", ".join(sources))
-    if started_from:
-        bits.append(f"Leads started from {started_from:%m/%d/%Y}")
-    if show != "All":
-        bits.append(show)
-    when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
-    bits.append(when)
-    st.markdown(f'<div class="applied">Showing <b>{esc(" · ".join(bits))}</b>'
-                f'<span class="sortpill">Sorted by Rep → Market → Source → Lead Id → Time</span></div>',
-                unsafe_allow_html=True)
 
     if df.empty:
         lead_filter = " and ".join(x for x in [
@@ -683,25 +862,45 @@ def page_call_report():
         st.warning("No calls in this date range" + (f" match a lead {lead_filter}." if lead_filter else "."))
         return
 
-    view = pre[pre["From"].astype(str).isin(froms)] if froms else pre
+    pre = _cr_filter(df, direction, show, team_reps)
+    ppre = _cr_filter(pdf, direction, show, team_reps)
+    order = rep_order(pre)
 
-    # ---------- counters ----------
+    rep_counts = pre["From"].dropna().astype(str).value_counts() if not pre.empty else pd.Series(dtype=int)
+    rep_options = [ALL_REPS] + sorted(rep_counts.index, key=str.lower)
+    if st.session_state.get("rep_pick") not in rep_options:
+        st.session_state["rep_pick"] = ALL_REPS
+    rep_pick = st.session_state.get("rep_pick") or ALL_REPS
+    froms = [] if rep_pick == ALL_REPS else [rep_pick]
+    view = pre[pre["From"].astype(str).isin(froms)] if froms else pre
+    pview = ppre[ppre["From"].astype(str).isin(froms)] if froms else ppre
+
+    # ---------- summary cards, each compared with the previous period ----------
     secs = view["Duration"].map(dur_seconds)
+    psecs = pview["Duration"].map(dur_seconds) if not pview.empty else pd.Series(dtype=float)
     out_n = int(view["Direction"].fillna("").str.lower().eq("outbound").sum())
-    in_n = int(view["Direction"].fillna("").str.lower().eq("inbound").sum())
-    uniq = view["To"].nunique()
+    in_n = len(view) - out_n
     matched = int((view["Lead Id"] != "Not Found").sum())
     needs_n = view.loc[(view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked"), "To"].nunique()
-    called3 = view.loc[view["Times Called"] >= 3, "To"].nunique()
+    avg = secs.mean() if len(view) else 0
+    pavg = psecs.mean() if len(pview) else 0
     kpi_cards([
-        {"label": "Total calls", "value": f"{len(view):,}", "note": f"{out_n:,} outbound · {in_n:,} inbound"},
-        {"label": "Unique numbers", "value": f"{uniq:,}",
-         "note": f"{len(view) / uniq:.1f} calls per number · {called3:,} called 3+ times" if uniq else ""},
-        {"label": "Matched to a lead", "value": f"{matched / len(view):.0%}" if len(view) else "0%",
-         "note": f"{matched:,} calls · {len(view) - matched:,} not found" if len(view) else ""},
-        {"label": "Needs a lead picked", "value": f"{needs_n:,}", "note": "numbers match 2+ leads",
+        {"label": "Calls", "value": f"{len(view):,}{delta_html(len(view), len(pview))}",
+         "note": f"vs {len(pview):,} {cmp_label} · {out_n:,} out · {in_n:,} in"},
+        {"label": "Talk time", "value": f"{fmt_total(secs.sum())}{delta_html(secs.sum(), psecs.sum())}",
+         "note": f"avg {fmt_short(avg)} per call (was {fmt_short(pavg)})" if len(view) else ""},
+        {"label": "Matched to a lead", "value": f"{matched / len(view):.0%}" if len(view) else "—",
+         "note": f"{matched:,} calls · {len(view) - matched:,} not in MMS"},
+        {"label": "⚑ Needs a lead picked", "value": f"{needs_n:,}", "note": "numbers match 2+ leads — see Needs Review",
          "alert": needs_n > 0},
     ])
+
+    # ---------- chart + rep board ----------
+    c1, c2 = st.columns([1.75, 1], gap="medium")
+    with c1, st.container(border=True, key="pm_chart"):
+        calls_chart(view, start, end, order)
+    with c2, st.container(border=True, key="pm_board"):
+        rep_board(pre, ppre, order, rep_pick, cmp_label)
 
     if view.empty:
         st.info("No calls match these filters.")
@@ -719,7 +918,6 @@ def page_call_report():
                             key=_sort_key, na_position="last", kind="stable").reset_index(drop=True)
     view["Match"] = view.apply(match_label, axis=1)
 
-    # downloads (full detail) in the header
     full = view[CALL_COLS + LEAD_COLS].copy()
     export = full.copy()
     export["Date/Time"] = export["Date/Time"].map(us_time)
@@ -730,153 +928,232 @@ def page_call_report():
                            icon=":material/download:", width="stretch")
         xlsx = to_excel(full)
         if xlsx:
-            d2.download_button("Download Excel", xlsx, file_name=f"call_report_{start}_{end}.xlsx",
+            d2.download_button("Excel", xlsx, file_name=f"call_report_{start}_{end}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                icon=":material/table_view:", type="primary", width="stretch")
 
-    left, right = st.columns([3.3, 1], gap="medium")
-    with left:
-        n_leads = view.loc[view["Lead Id"] != "Not Found", "Lead Id"].nunique()
-        n_reps = view["From"].nunique()
-        t_all, t_lead, t_rep = st.tabs([f"All calls  {len(view):,}", f"Grouped by lead  {n_leads:,}",
-                                        f"Grouped by rep  {n_reps:,}"])
-        with t_all:
-            show_all = st.toggle("Show all columns", key="all_cols")
-            call_cols = {"Date/Time": "Time", "From": "Rep", "To": "To",
-                         "Duration": "Dur.", "Times Called": "Times"}
-            lead_cols = {"Lead Id": "Lead", "Lead Source": "Lead Source", "Company In Ad": "Company", "Lead Owner": "Owner",
-                         "Status": "Status", "Match": "Match"}
-            if show_all:
-                call_cols = {"Direction": "Direction", **call_cols, "Ext / ID": "Ext"}
-                lead_cols = {**lead_cols, "Lead Started": "Lead Started", "Last Edited": "Last Edited",
-                             "Media Market": "Market",
-                             "Contact Name (phase2)": "Contact", "Phase2 Completed": "Phase2 Completed",
-                             "Matched On": "Matched On", "Leads Matched": "Leads Matched"}
-            table = view[list(call_cols) + list(lead_cols)].rename(columns={**call_cols, **lead_cols})
-            table["To"] = table["To"].map(fmt_phone)
-            lead_names = list(lead_cols.values())
-            widths = {"Time": 114, "Rep": 122, "To": 100, "Dur.": 56, "Times": 54, "Direction": 80, "Ext": 70,
-                      "Lead": 72, "Company": 132, "Owner": 120, "Status": 100, "Match": 104,
-                      "Lead Started": 100, "Last Edited": 140, "Lead Source": 102, "Market": 110,
-                      "Contact": 130, "Phase2 Completed": 140, "Matched On": 170, "Leads Matched": 100}
-            call_w = sum(widths[c] for c in call_cols.values()) + 33  # + row checkbox column
-            lead_w = sum(widths[c] for c in lead_cols.values())
-            if len(table) <= 10000:
-                styled = (table.style
-                          .map(lambda v: "color: #b42318; font-weight: 700" if v >= 3 else "", subset=["Times"])
-                          .map(lambda v: "font-weight: 600", subset=["Company"])
-                          .map(lambda v: ("background-color: #FFF6E5; color: #8a4b00; font-weight: 700"
-                                          if str(v).startswith("⚑") else
-                                          "color: #127a4a; font-weight: 600" if str(v).startswith("✓") else
-                                          "color: #8a92a3; font-style: italic"), subset=["Match"]))
-                if "Leads Matched" in table.columns:
-                    styled = styled.format({"Leads Matched": "{:d}", "Times": "{:d}"})
-                else:
-                    styled = styled.format({"Times": "{:d}"})
-            else:
-                styled = table
-            event = st.dataframe(
-                styled, key="calls_table", width="stretch", hide_index=True,
-                height=min(40 + 35 * len(table), 600),
-                on_select="rerun", selection_mode="single-row",
-                column_config={
-                    **{c: st.column_config.Column(width=widths[c]) for c in table.columns if c in widths},
-                    "Time": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=widths["Time"]),
-                    "Times": st.column_config.NumberColumn(width=widths["Times"]),
-                    "Match": st.column_config.TextColumn(
-                        width=widths["Match"],
-                        help="✓ = lead confirmed · ⚑ Pick = number matches several leads; "
-                             "click the row, then Change lead")})
-            st.caption(f"{len(view):,} calls · click a row to see its lead on the right")
-        with t_lead:
-            g = view[view["Lead Id"] != "Not Found"].groupby("Lead Id").agg(
-                Company=("Company In Ad", "first"), Owner=("Lead Owner", "first"), Status=("Status", "first"),
-                Source=("Lead Source", "first"), Calls=("To", "size"), Numbers=("To", "nunique"),
-                Reps=("From", lambda s: ", ".join(sorted(set(s.dropna().astype(str))))),
-                Last_call=("Date/Time", "max")).reset_index().sort_values("Calls", ascending=False)
-            g = g.rename(columns={"Lead Id": "Lead", "Last_call": "Last call"})
-            st.dataframe(g, hide_index=True, width="stretch", height=560,
-                         column_config={"Last call": DT_FMT})
-        with t_rep:
-            v2 = view.assign(_secs=view["Duration"].map(dur_seconds),
-                             _out=view["Direction"].fillna("").str.lower().eq("outbound"),
-                             _in=view["Direction"].fillna("").str.lower().eq("inbound"),
-                             _match=view["Lead Id"] != "Not Found",
-                             _needs=(view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked"))
-            g = v2.groupby("From").agg(Calls=("To", "size"), Outbound=("_out", "sum"), Inbound=("_in", "sum"),
-                                       Numbers=("To", "nunique"), Matched=("_match", "mean"),
-                                       Talk=("_secs", "sum"), Needs_pick=("_needs", "sum")).reset_index()
-            g["Matched"] = (g["Matched"] * 100).round(0).astype(int).astype(str) + "%"
-            g["Talk"] = g["Talk"].map(fmt_total)
-            g = g.rename(columns={"From": "Rep", "Talk": "Talk time", "Needs_pick": "Needs pick"}) \
-                 .sort_values("Calls", ascending=False)
-            st.dataframe(g, hide_index=True, width="stretch")
+    # ---------- rep filter + table ----------
+    st.pills("Rep", rep_options, key="rep_pick", selection_mode="single", label_visibility="collapsed",
+             format_func=lambda r: f"{r}  ·  {len(pre):,}" if r == ALL_REPS else f"{r}  ·  {int(rep_counts[r]):,}")
+    n_leads = view.loc[view["Lead Id"] != "Not Found", "Lead Id"].nunique()
+    n_reps = view["From"].nunique()
+    t_all, t_lead, t_rep = st.tabs([f"All calls  {len(view):,}", f"By lead  {n_leads:,}", f"By rep  {n_reps:,}"])
+    with t_all:
+        tl, tr = st.columns([3, 1.4], vertical_alignment="center")
+        tl.markdown('<div class="applied"><span class="sortpill">Sorted by Rep → Market → Source → Lead → Time'
+                    '</span><span>Click a call to open its lead</span></div>', unsafe_allow_html=True)
+        show_all = tr.toggle("Show all columns", key="all_cols")
+        call_cols = {"Date/Time": "Time", "From": "Rep", "To": "Number", "Duration": "Dur.", "Times Called": "Dialed"}
+        lead_cols = {"Lead Id": "Lead", "Lead Source": "Lead Source", "Company In Ad": "Company",
+                     "Lead Owner": "Owner", "Status": "Status", "Match": "Match"}
+        if show_all:
+            call_cols = {"Direction": "Direction", **call_cols, "Ext / ID": "Ext"}
+            lead_cols = {**lead_cols, "Lead Started": "Lead Started", "Last Edited": "Last Edited",
+                         "Media Market": "Market", "Contact Name (phase2)": "Contact",
+                         "Phase2 Completed": "Phase2 Completed", "Matched On": "Matched On",
+                         "Leads Matched": "Leads Matched"}
+        table = view[list(call_cols) + list(lead_cols)].rename(columns={**call_cols, **lead_cols})
+        table["Number"] = table["Number"].map(fmt_phone)
 
-    with right:
+        def _cells(frame):
+            css = pd.DataFrame("", index=frame.index, columns=frame.columns)
+            css["Company"] = "font-weight: 600"
+            for i, v in frame["Status"].items():
+                k = _status_kind(v)
+                if k:
+                    bg, fg = STATUS_COLORS[k]
+                    css.at[i, "Status"] = f"background-color: {bg}; color: {fg}; font-weight: 600"
+            for i, v in frame["Dialed"].items():
+                if v >= 3:
+                    css.at[i, "Dialed"] = "background-color: #FDECEA; color: #C0392B; font-weight: 700"
+            for i, v in frame["Match"].items():
+                s = str(v)
+                css.at[i, "Match"] = ("background-color: #FFF4E0; color: #9a5b00; font-weight: 700" if s.startswith("⚑")
+                                      else "color: #137a43; font-weight: 600" if s.startswith("✓")
+                                      else "color: #8a92a3; font-style: italic")
+            return css
+        styled = table.style.apply(_cells, axis=None) if len(table) <= 10000 else table
+        event = st.dataframe(
+            styled, key=f"calls_table_{start}_{end}_{rep_pick}_{show_all}", width="stretch", hide_index=True,
+            height=min(40 + 35 * len(table), 640), on_select="rerun", selection_mode="single-row",
+            column_config={
+                "Time": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=125),
+                "Dialed": st.column_config.NumberColumn(width=64, help="Times this number was called in the range"),
+                "Dur.": st.column_config.TextColumn(width=64),
+                "Lead": st.column_config.TextColumn(width=80),
+                "Match": st.column_config.TextColumn(
+                    width=110, help="✓ = lead confirmed · ⚑ Pick = number matches several leads; "
+                                    "open the call, then Change lead")})
+        st.caption(f"{len(view):,} calls")
         sel = event.selection.rows if event and event.selection else []
-        if sel and sel[0] < len(view):
-            lead_card(view.iloc[sel[0]], df)
-        else:
-            st.markdown('<div class="lc empty"><div class="lc-name">Click a call</div>'
-                        '<div class="lc-meta">Select any row in the table to see its MMS lead here, '
-                        'every call to that number, and to change the lead if it matches several.</div></div>',
-                        unsafe_allow_html=True)
+        ident = f"{start}{end}{rep_pick}{show_all}-{view.iloc[sel[0]]['call_id']}" if sel and sel[0] < len(view) else None
+        if drawer_trigger("cr", ident):
+            lead_drawer(view.iloc[sel[0]], df)
+    with t_lead:
+        g = view[view["Lead Id"] != "Not Found"].groupby("Lead Id").agg(
+            Company=("Company In Ad", "first"), Owner=("Lead Owner", "first"), Status=("Status", "first"),
+            Source=("Lead Source", "first"), Calls=("To", "size"), Numbers=("To", "nunique"),
+            Reps=("From", lambda s: ", ".join(sorted(set(s.dropna().astype(str))))),
+            Last_call=("Date/Time", "max")).reset_index().sort_values("Calls", ascending=False)
+        g = g.rename(columns={"Lead Id": "Lead", "Last_call": "Last call"})
+        st.dataframe(styled_log(g), hide_index=True, width="stretch", height=560,
+                     column_config={"Last call": DT_FMT})
+    with t_rep:
+        v2 = view.assign(_secs=view["Duration"].map(dur_seconds),
+                         _out=view["Direction"].fillna("").str.lower().eq("outbound"),
+                         _in=view["Direction"].fillna("").str.lower().eq("inbound"),
+                         _match=view["Lead Id"] != "Not Found",
+                         _needs=(view["Leads Matched"] >= 2) & (view["Lead Choice"] != "Picked"))
+        g = v2.groupby("From").agg(Calls=("To", "size"), Outbound=("_out", "sum"), Inbound=("_in", "sum"),
+                                   Numbers=("To", "nunique"), Matched=("_match", "mean"),
+                                   Talk=("_secs", "sum"), Needs_pick=("_needs", "sum")).reset_index()
+        g["Matched"] = (g["Matched"] * 100).round(0).astype(int).astype(str) + "%"
+        g["Talk"] = g["Talk"].map(fmt_total)
+        g = g.rename(columns={"From": "Rep", "Talk": "Talk time", "Needs_pick": "Needs pick"}) \
+             .sort_values("Calls", ascending=False)
+        st.dataframe(g, hide_index=True, width="stretch")
 
 
 # =====================================================================================
 # NEEDS REVIEW
 # =====================================================================================
+def _nr_use(phone: str, lead_id: str, nxt):
+    sb.table("lead_picks").upsert({"phone10": str(phone)[-10:], "lead_id": str(lead_id),
+                                   "picked_at": pd.Timestamp.now("UTC").isoformat()}, on_conflict="phone10").execute()
+    _after_pick()
+    st.session_state["nr_done"] = f"{fmt_phone(phone)} now uses lead {lead_id} for every call."
+    if nxt:
+        st.session_state["nr_sel"] = nxt
+
+
+def _nr_go(phone):
+    if phone:
+        st.session_state["nr_sel"] = phone
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def calls_to_number(phone: str) -> pd.DataFrame:
+    """Most recent calls to one phone number (newest first)."""
+    try:
+        data = sb.table("calls").select("*").eq("To", int(str(phone)[-10:])).order("ID", desc=True).limit(25) \
+                 .execute().data
+    except Exception:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    if df.empty or "Date/Time" not in df.columns:
+        return pd.DataFrame()
+    df["Date/Time"] = pd.to_datetime(df["Date/Time"], format="%m/%d/%y %I:%M %p", errors="coerce")
+    return apply_rep_names(df).sort_values("Date/Time", ascending=False)
+
+
+def _short_date(v) -> str:
+    try:
+        x = pd.to_datetime(v)
+        return f"{x:%b} {x.day}, {x.year}" if v else ""
+    except Exception:
+        return str(v or "")
+
+
 def page_needs_review():
-    st.title("Needs Review")
-    st.caption("Numbers that match 2 or more MMS leads and still need the right lead picked. "
-               "Once you pick one it drops off this list and every call to that number uses it.")
-    span = st.segmented_control("Called in the last", ["7 days", "30 days", "90 days"], default="30 days",
-                                key="nr_days") or "30 days"
+    h1, h2 = st.columns([4, 1.6], vertical_alignment="bottom")
+    with h1:
+        st.title("Needs Review")
+        st.caption("Numbers that match 2 or more MMS leads. Pick the right lead once — every call to that "
+                   "number uses it from then on.")
+    span = h2.segmented_control("Called in the last", ["7 days", "30 days", "90 days"], default="30 days",
+                                key="nr_days", label_visibility="collapsed") or "30 days"
     days = int(span.split()[0])
     data = load_needs_review(days)
+    done = st.session_state.pop("nr_done", None)
+    if done:
+        st.toast(done, icon=":material/check_circle:")
     if data.empty:
         st.success("All caught up — every multi-lead number called in this period has a lead picked.")
         return
-    # caller names (latest name for each extension / username)
     c = load_contacts()
     c = c[c["rep"].fillna("").str.strip() != ""].sort_values("effective_from")
     names = c.groupby("from_value")["rep"].last().to_dict()
     data = data.copy()
-    data["Number"] = data["phone10"].map(fmt_phone)
-    data["Called by"] = data["callers"].map(
-        lambda xs: ", ".join(sorted({names.get(x, x) for x in (xs or [])})))
-    data["Last call"] = pd.to_datetime(data["last_call"])
-    table = data[["Number", "calls", "Last call", "Called by", "leads_matched"]].rename(
-        columns={"calls": "Calls", "leads_matched": "Leads matched"})
+    data["phone10"] = data["phone10"].astype(str)
+    data["callers_n"] = data["callers"].map(lambda xs: sorted({names.get(x, x) for x in (xs or [])}))
+    data["last_call"] = pd.to_datetime(data["last_call"])
+    data = data.sort_values(["calls", "last_call"], ascending=[False, False]).reset_index(drop=True)
+    phones = data["phone10"].tolist()
+    if st.session_state.get("nr_sel") not in phones:
+        st.session_state["nr_sel"] = phones[0]
+    info = data.set_index("phone10")
 
-    kpi_cards([
-        {"label": "Numbers to review", "value": f"{len(data):,}", "note": f"called in the last {days} days",
-         "alert": True},
-        {"label": "Calls affected", "value": f"{int(data['calls'].sum()):,}", "note": "calls to these numbers"},
-        {"label": "Most leads on one number", "value": f"{int(data['leads_matched'].max()):,}",
-         "note": "matching MMS leads"},
-    ])
-    left, right = st.columns([1.7, 2], gap="medium")
-    with left:
-        ev = st.dataframe(table, hide_index=True, width="stretch", height=min(40 + 35 * len(table), 600),
-                          on_select="rerun", selection_mode="single-row", key=f"nr_table_{days}",
-                          column_config={"Last call": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=125),
-                                         "Number": st.column_config.Column(width=105),
-                                         "Calls": st.column_config.NumberColumn(width=55),
-                                         "Leads matched": st.column_config.NumberColumn("Leads", width=55)})
-        st.caption("Sorted by most calls first · click a number to pick its lead")
-    with right:
-        sel = ev.selection.rows if ev and ev.selection else []
-        if not sel:
-            st.markdown('<div class="lc empty"><div class="lc-name">Pick a number</div>'
-                        '<div class="lc-meta">Click a number on the left to see every MMS lead it matches, '
-                        'then choose the right one.</div></div>', unsafe_allow_html=True)
-            return
-        row = data.iloc[sel[0]]
-        st.subheader(f"{row['Number']} · {plural(int(row['leads_matched']), 'matching lead')}")
-        st.caption(f"{plural(int(row['calls']), 'call')} · called by {row['Called by'] or 'unknown'}. "
-                   "Click the right lead, then **Use lead**.")
-        render_pick(str(row["phone10"]), "", "", "nr")
+    st.markdown(f'<div class="nr-sum"><span><b>{len(data):,}</b> numbers to review</span>'
+                f'<span><b>{int(data["calls"].sum()):,}</b> calls affected</span>'
+                f'<span class="sp"></span><span>Most-called numbers first</span></div>', unsafe_allow_html=True)
+
+    def _label(p):
+        r = info.loc[p]
+        who = ", ".join(n.split()[0] for n in r["callers_n"]) or "unknown"
+        return f"**{fmt_phone(p)}** · {int(r['leads_matched'])} leads  \n{plural(int(r['calls']), 'call')} · {who}"
+
+    left, right = st.columns([1, 2.4], gap="medium")
+    sel = st.session_state["nr_sel"]
+    i = phones.index(sel)
+    with left, st.container(border=True, key="nr_queue", height=640):
+        st.markdown(f'<div class="card-h">Queue<span>{i + 1} of {len(phones)}</span></div>', unsafe_allow_html=True)
+        st.radio("Queue", phones, key="nr_sel", format_func=_label, label_visibility="collapsed")
+
+    row = info.loc[sel]
+    nxt = phones[i + 1] if i + 1 < len(phones) else (phones[i - 1] if i > 0 else None)
+    callers = set(row["callers_n"])
+    with right, st.container(border=True, key="nr_pick"):
+        st.markdown(f'<div class="nr-title">{fmt_phone(sel)} — which lead is this?</div>', unsafe_allow_html=True)
+        st.caption(f"{plural(int(row['calls']), 'call')} · last call {us_time(row['last_call'])} · called by "
+                   f"{', '.join(sorted(callers)) or 'unknown'}")
+        leads = pd.DataFrame(sb.rpc("leads_for_number", {"p_phone": sel}).execute().data)
+        if leads.empty:
+            st.info("No matching leads found for this number.")
+        else:
+            leads["_edited"] = pd.to_datetime(leads["last_edited"], errors="coerce")
+            own = leads[leads["lead_owner"].isin(callers)]
+            pool = own if not own.empty else leads
+            sug = pool.sort_values("_edited", ascending=False).index[0]
+            newest = leads["_edited"].idxmax() if leads["_edited"].notna().any() else None
+            per_row = 3 if len(leads) != 4 else 2
+            for start_i in range(0, len(leads), per_row):
+                cols = st.columns(per_row, gap="small")
+                for col, (ix, l) in zip(cols, list(leads.iterrows())[start_i:start_i + per_row]):
+                    rec = get_lead(str(l["lead_id"])) or {}
+                    badges = []
+                    if ix == sug:
+                        badges.append('<span class="bd sug">★ Suggested</span>')
+                    if l["lead_owner"] in callers:
+                        badges.append('<span class="bd own">Caller owns it</span>')
+                    if ix == newest:
+                        badges.append('<span class="bd new">Most recently edited</span>')
+                    if not badges:
+                        badges.append('<span class="bd old">Older lead</span>')
+                    src = str(rec.get("Lead Source") or "").upper()
+                    kv = [("Contact", rec.get("Contact Name (phase2)")), ("Owner", l["lead_owner"]),
+                          ("Market", l["media_market"]), ("Lead started", _short_date(rec.get("Lead Started"))),
+                          ("Last edited", _short_date(l["last_edited"])), ("Number found in", l.get("matched_on"))]
+                    kvh = "".join(f"<div><span>{k}</span><b>{esc(v) if v else '—'}</b></div>" for k, v in kv)
+                    with col, st.container(border=True, key=f"nr_c{'_sug' if ix == sug else ''}_{start_i}_{ix}"):
+                        st.markdown(f'<div class="nr-card"><div class="bds">{"".join(badges)}</div>'
+                                    f'<div class="lc-id">LEAD {esc(l["lead_id"])}{" · " + esc(src) if src else ""}</div>'
+                                    f'<div class="lc-name">{esc(l["company_in_ad"] or rec.get("Company (phase2)") or "")}</div>'
+                                    f'{_status_pill(l["status"])}<div class="nr-kv">{kvh}</div></div>',
+                                    unsafe_allow_html=True)
+                        st.button("Use this lead", key=f"nr_use_{sel}_{l['lead_id']}", width="stretch",
+                                  type="primary" if ix == sug else "secondary", on_click=_nr_use,
+                                  args=(sel, str(l["lead_id"]), nxt))
+        hist = calls_to_number(sel)
+        if not hist.empty:
+            lines = "".join(f'<div class="mrow"><span>{us_time(h["Date/Time"])} · {esc(h["From"])}</span>'
+                            f'<span>{esc(_short_len(h["Duration"]))}</span></div>' for _, h in hist.head(6).iterrows())
+            st.markdown(f'<div class="mini"><h4>Latest calls to this number</h4>{lines}</div>', unsafe_allow_html=True)
+        b = st.columns([3, 1.1, 1.1], vertical_alignment="center")
+        b[0].caption("Suggested = the calling rep's own lead, otherwise the most recently edited one.")
+        b[1].button("Previous", icon=":material/arrow_back:", width="stretch", disabled=i == 0,
+                    on_click=_nr_go, args=(phones[i - 1] if i else None,), key="nr_prev")
+        b[2].button("Skip", icon=":material/arrow_forward:", width="stretch", disabled=i + 1 >= len(phones),
+                    on_click=_nr_go, args=(phones[i + 1] if i + 1 < len(phones) else None,), key="nr_next")
 
 
 # =====================================================================================
@@ -1678,9 +1955,7 @@ def page_att_calls():
         st.session_state.setdefault(k, v)
     st.session_state.setdefault("att_applied", _att_defaults())
     a = {**_att_defaults(), **st.session_state["att_applied"]}
-    if st.session_state.get("a_week") not in att_week_options():
-        st.session_state["a_week"] = bweek_monday(date.today())
-    start, end = _att_date_range(a["a_preset"], a["a_dates"], a["a_week"])
+    start, end = g_range()
 
     att = load_att(start, end)
     in_range = att[(att["_date"] >= start) & (att["_date"] <= end)]
@@ -1706,13 +1981,6 @@ def page_att_calls():
     dl_slot = h2.container()
 
     with st.form("att_filters"):
-        r1 = st.columns([3.6, 1.7, 1.5])
-        r1[0].segmented_control("Dates", ATT_DATE_PRESETS, key="a_preset",
-                                help="Weeks are broadcast weeks (Monday – Sunday)")
-        r1[1].selectbox("Broadcast week", att_week_options(), key="a_week", format_func=bweek_label,
-                        help="Used when Dates is set to Broadcast week")
-        r1[2].date_input("Custom range", key="a_dates", format="MM/DD/YYYY",
-                         help="Used when Dates is set to Custom")
         r2 = st.columns([1.9, 1.6, 1.6, 1.2, 1.7])
         r2[0].segmented_control("Tolls", group_opts, key="a_group",
                                 help="USA Vein = every toll in the Toll Sources master's USA Vein group")
@@ -2464,19 +2732,8 @@ def _calls_tab():
         st.session_state["cl_week"] = None
 
     teams = load_rep_teams()
-    team_opts = [EVERYONE] + sorted(teams)
-    if st.session_state.get("cl_team") not in team_opts:
-        st.session_state["cl_team"] = "Sales Team" if "Sales Team" in teams else EVERYONE
-    f = st.columns([3.4, 1.8, 2.6])
-    f2 = st.columns([2.4, 2.0, 3.4])
-    f[0].segmented_control("Dates", CL_PRESETS, key="cl_preset", on_change=_cl_preset_changed)
-    f[1].selectbox("Broadcast week", att_week_options(), key="cl_week", index=None, placeholder="Pick a week…",
-                   format_func=bweek_label, on_change=_cl_week_changed)
-    if st.session_state.get("cl_preset") == "Custom" and not st.session_state.get("cl_week"):
-        y = date.today() - timedelta(days=1)
-        st.session_state.setdefault("cl_custom", (y, y))
-        f[2].date_input("Custom dates", key="cl_custom", format="MM/DD/YYYY")
-    start, end = _cl_range()
+    f2 = st.columns([2.4, 5.4])
+    start, end = g_range()
 
     calls = load_calls(start, end)
     if not calls.empty:
@@ -2485,11 +2742,7 @@ def _calls_tab():
         if not calls.empty else []
     st.session_state["cl_sources"] = [x for x in st.session_state.get("cl_sources", []) if x in src_opts]
     f2[0].multiselect("Lead source", src_opts, key="cl_sources", placeholder="All lead sources")
-    f2[1].segmented_control("Team", team_opts, key="cl_team")
-
-    when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
-    if st.session_state.get("cl_week") or st.session_state.get("cl_preset") in ("This week", "Last week"):
-        when = f"Week {bweek_number(start)} · {when}"
+    when = g_when()
     if calls.empty:
         st.info(f"No calls for {when}.")
         return
@@ -2498,7 +2751,7 @@ def _calls_tab():
     calls = calls.copy()
     calls["Times Dialed"] = calls.groupby("To")["To"].transform("count").astype(int)
     view = calls
-    team = st.session_state.get("cl_team") or EVERYONE
+    team = st.session_state.get("g_team") or EVERYONE
     if team != EVERYONE:
         view = view[view["From"].astype(str).isin(teams.get(team, set()))]
     if st.session_state["cl_sources"]:
@@ -2555,25 +2808,27 @@ def _calls_tab():
     if is_admin:
         table.insert(0, "Direction", view["Direction"].fillna("").str.capitalize())
 
-    left, right = st.columns([3, 1], gap="medium")
-    with left:
-        ev = st.dataframe(styled_log(table), hide_index=True, width="stretch",
-                          height=min(38 + 35 * len(table), 640),
-                          on_select="rerun", selection_mode="single-row",
-                          key=f"cl_table_{start}_{end}_{rep}_{team}_{len(table)}",
-                          column_config={"Date": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=135),
-                                         "Duration": st.column_config.TextColumn(width="small"),
-                                         "Lead ID": st.column_config.TextColumn(width="small"),
-                                         "Times Dialed": st.column_config.NumberColumn(
-                                             format="%d", width="small",
-                                             help="Times this number was dialed in the picked dates (all reps)")})
+    ev = st.dataframe(styled_log(table), hide_index=True, width="stretch",
+                      height=min(38 + 35 * len(table), 700),
+                      on_select="rerun", selection_mode="single-row",
+                      key=f"cl_table_{start}_{end}_{rep}_{team}_{len(table)}",
+                      column_config={"Date": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=135),
+                                     "Duration": st.column_config.TextColumn(width="small"),
+                                     "Lead ID": st.column_config.TextColumn(width="small"),
+                                     "Times Dialed": st.column_config.NumberColumn(
+                                         format="%d", width="small",
+                                         help="Times this number was dialed in the picked dates (all reps)")})
     sel = ev.selection.rows if ev and ev.selection else []
-    with right:
-        if sel:
-            _cl_lead_panel(view.iloc[sel[0]], calls)
-        else:
-            with st.container(border=True):
-                st.caption("Click a call to see the lead's details and every call to it that month.")
+    ident = f"{start}{end}{rep}{team}-{sel[0]}" if sel else None
+    st.caption("Click a call to open its lead")
+    if drawer_trigger("cl", ident):
+        cl_drawer(view.iloc[sel[0]], calls)
+
+
+@st.dialog("Lead", width="medium", position="right")
+def cl_drawer(r, calls: pd.DataFrame):
+    st.markdown('<div class="pm-drawer"></div>', unsafe_allow_html=True)
+    _cl_lead_panel(r, calls)
 
 
 # ---------- Leads tab: leads created in a period, and who dialed them ----------
@@ -2628,16 +2883,8 @@ def _leads_tab():
     if st.session_state.get("ld_week") not in [None] + att_week_options():
         st.session_state["ld_week"] = None
 
-    f = st.columns([3.4, 1.8, 2.6])
     f2 = st.columns([2.4, 2.4, 3.0])
-    f[0].segmented_control("Leads created", LD_PRESETS, key="ld_preset", on_change=_ld_preset_changed)
-    f[1].selectbox("Broadcast week", att_week_options(), key="ld_week", index=None, placeholder="Pick a week…",
-                   format_func=bweek_label, on_change=_ld_week_changed)
-    if st.session_state.get("ld_preset") == "Custom" and not st.session_state.get("ld_week"):
-        y = date.today() - timedelta(days=1)
-        st.session_state.setdefault("ld_custom", (y, y))
-        f[2].date_input("Custom dates", key="ld_custom", format="MM/DD/YYYY")
-    start, end = _ld_range()
+    start, end = g_range()
 
     leads = load_leads_with_calls(start, end)
     src_opts = sorted(x for x in leads["lead_source"].dropna().unique() if x)
@@ -2645,9 +2892,7 @@ def _leads_tab():
     f2[0].multiselect("Lead source", src_opts, key="ld_sources", placeholder="All lead sources")
     f2[1].segmented_control("Show", LD_SHOW, key="ld_show")
 
-    when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
-    if st.session_state.get("ld_week") or st.session_state.get("ld_preset") in ("This week", "Last week"):
-        when = f"Week {bweek_number(start)} · {when}"
+    when = g_when()
     if leads.empty:
         st.info(f"No leads were created {when}.")
         return
@@ -2708,53 +2953,54 @@ def _leads_tab():
             css.at[i, "Times Dialed"] = ("color: #c0392b; font-weight: 600" if v == "Not called"
                                          else "font-weight: 700")
 
-    left, right = st.columns([3, 1], gap="medium")
-    with left:
-        ev = st.dataframe(styled_log(table, extra=_not_called), hide_index=True, width="stretch",
-                          height=min(38 + 35 * len(table), 640), on_select="rerun", selection_mode="single-row",
-                          key=f"ld_table_{start}_{end}_{show}_{len(table)}",
-                          column_config={"Created": st.column_config.TextColumn(width="small"),
-                                         "Lead ID": st.column_config.TextColumn(width="small"),
-                                         "Times Dialed": st.column_config.TextColumn(
-                                             help="Calls to this lead from the day it was created to today")})
+    ev = st.dataframe(styled_log(table, extra=_not_called), hide_index=True, width="stretch",
+                      height=min(38 + 35 * len(table), 640), on_select="rerun", selection_mode="single-row",
+                      key=f"ld_table_{start}_{end}_{show}_{len(table)}",
+                      column_config={"Created": st.column_config.TextColumn(width="small"),
+                                     "Lead ID": st.column_config.TextColumn(width="small"),
+                                     "Times Dialed": st.column_config.TextColumn(
+                                         help="Calls to this lead from the day it was created to today")})
     sel = ev.selection.rows if ev and ev.selection else []
-    with right:
-        if not sel:
-            with st.container(border=True):
-                st.caption("Click a lead to see who dialed it and every call since it was created.")
-            return
+    st.caption("Click a lead to see who dialed it and every call since it was created")
+    ident = f"{start}{end}{show}-{leads.iloc[sel[0]]['lead_id']}" if sel else None
+    if drawer_trigger("ld", ident):
         r = leads.iloc[sel[0]]
         lc = calls[calls["lead_id"] == r["lead_id"]].sort_values("Date/Time", ascending=False) \
             if not calls.empty else calls
-        with st.container(border=True):
-            created = f" · CREATED {r['_sd'].month}/{r['_sd'].day}/{r['_sd']:%y}" if pd.notna(r["_sd"]) else ""
-            src = str(r["lead_source"] or "").upper()
-            st.markdown(f"<div style='opacity:.6;font-size:.75rem;letter-spacing:.04em'>LEAD {esc(r['lead_id'])}"
-                        f"{' · ' + esc(src) if src else ''}{created}</div>"
-                        f"<div style='font-size:1.3rem;font-weight:700;line-height:1.25;margin:2px 0 6px'>"
-                        f"{esc(r['company'] or '')}</div>{_status_pill(r['status'])}", unsafe_allow_html=True)
-            kv = "".join(f"<span>{k}</span><span>{esc(v)}</span>" for k, v in
-                         [("Contact", r["contact"]), ("Owner", r["owner"]), ("Market", r["market"])]
-                         if v and not (isinstance(v, float) and pd.isna(v)))
-            st.markdown(f"<style>.clkv span:nth-child(odd){{opacity:.6}}</style><div class='clkv' style='display:grid;"
-                        f"grid-template-columns:90px 1fr;gap:6px 10px;margin:12px 0 6px;font-size:.9rem'>{kv}</div>",
-                        unsafe_allow_html=True)
-            if not lc.empty:
-                chips = "".join(f"<span style='background:rgba(128,128,128,.12);border-radius:8px;padding:5px 10px;"
-                                f"margin:0 6px 6px 0;display:inline-block;font-size:.85rem'><b>{n}</b> {esc(rep)}</span>"
-                                for rep, n in lc["From"].value_counts().items())
-                st.markdown(f"<div style='margin:4px 0'>{chips}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-weight:700;margin:10px 0 4px;border-top:1px solid rgba(128,128,128,.2);"
-                        f"padding-top:10px'>Every call since it was created · {len(lc)}</div>", unsafe_allow_html=True)
-            if lc.empty:
-                st.caption("No calls yet.")
-            else:
-                st.markdown("".join(
-                    f"<div style='display:grid;grid-template-columns:1.35fr 1fr .45fr;padding:5px 0;font-size:.85rem;"
-                    f"border-bottom:1px dashed rgba(128,128,128,.25)'><span>{us_time(h['Date/Time'])}</span>"
-                    f"<span>{esc(h['From'])}</span><span style='opacity:.6;text-align:right'>"
-                    f"{esc(_short_len(h['Duration']))}</span></div>" for _, h in lc.head(60).iterrows()),
-                    unsafe_allow_html=True)
+        ld_drawer(r, lc)
+
+
+@st.dialog("Lead", width="medium", position="right")
+def ld_drawer(r, lc: pd.DataFrame):
+    st.markdown('<div class="pm-drawer"></div>', unsafe_allow_html=True)
+    created = f" · CREATED {r['_sd'].month}/{r['_sd'].day}/{r['_sd']:%y}" if pd.notna(r["_sd"]) else ""
+    src = str(r["lead_source"] or "").upper()
+    st.markdown(f"<div style='opacity:.6;font-size:.75rem;letter-spacing:.04em'>LEAD {esc(r['lead_id'])}"
+                f"{' · ' + esc(src) if src else ''}{created}</div>"
+                f"<div style='font-size:1.3rem;font-weight:700;line-height:1.25;margin:2px 0 6px'>"
+                f"{esc(r['company'] or '')}</div>{_status_pill(r['status'])}", unsafe_allow_html=True)
+    kv = "".join(f"<span>{k}</span><span>{esc(v)}</span>" for k, v in
+                 [("Contact", r["contact"]), ("Owner", r["owner"]), ("Market", r["market"])]
+                 if v and not (isinstance(v, float) and pd.isna(v)))
+    st.markdown(f"<style>.clkv span:nth-child(odd){{opacity:.6}}</style><div class='clkv' style='display:grid;"
+                f"grid-template-columns:90px 1fr;gap:6px 10px;margin:12px 0 6px;font-size:.9rem'>{kv}</div>",
+                unsafe_allow_html=True)
+    if not lc.empty:
+        chips = "".join(f"<span style='background:rgba(128,128,128,.12);border-radius:8px;padding:5px 10px;"
+                        f"margin:0 6px 6px 0;display:inline-block;font-size:.85rem'><b>{n}</b> {esc(rep)}</span>"
+                        for rep, n in lc["From"].value_counts().items())
+        st.markdown(f"<div style='margin:4px 0'>{chips}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-weight:700;margin:10px 0 4px;border-top:1px solid rgba(128,128,128,.2);"
+                f"padding-top:10px'>Every call since it was created · {len(lc)}</div>", unsafe_allow_html=True)
+    if lc.empty:
+        st.caption("No calls yet.")
+    else:
+        st.markdown("".join(
+            f"<div style='display:grid;grid-template-columns:1.35fr 1fr .45fr;padding:5px 0;font-size:.85rem;"
+            f"border-bottom:1px dashed rgba(128,128,128,.25)'><span>{us_time(h['Date/Time'])}</span>"
+            f"<span>{esc(h['From'])}</span><span style='opacity:.6;text-align:right'>"
+            f"{esc(_short_len(h['Duration']))}</span></div>" for _, h in lc.head(60).iterrows()),
+            unsafe_allow_html=True)
 
 
 # =====================================================================================
@@ -3222,6 +3468,37 @@ def _email_button(where, deps: pd.DataFrame, managers: pd.DataFrame, group_mult:
                           icon=":material/download:", width="stretch")
 
 
+def person_cards(deps: pd.DataFrame, summary: pd.DataFrame, rates: pd.DataFrame, end: date):
+    """One card per salesperson: what they sold and what they're paid."""
+    ppl = summary[(summary["Sales"] != "TOTAL") & ((summary["Deposits"] > 0) | (summary["Total Payout"] > 0))]
+    if ppl.empty:
+        return
+    base = deps.groupby("salesperson")["base"].sum()
+    cards = []
+    for r in ppl.sort_values(["Total", "Total Payout"], ascending=False).itertuples():
+        n = int(r.Deposits)
+        lines = []
+        if n:
+            rate = _rep_rate(rates, r.Sales, end)
+            lines.append(f'<div><span>Commission{f" · {rate:g}%" if rate is not None else ""}</span>'
+                         f'<b>${r.Commission:,.2f}</b></div>' if rate is not None or r.Commission else
+                         '<div class="warn"><span>No rate set</span><span>Assign Commissions</span></div>')
+        if r.Matching:
+            lines.append(f'<div><span>Matching</span><b>${r.Matching:,.2f}</b></div>')
+        if r.Group:
+            lines.append(f'<div><span>Group</span><b>${r.Group:,.2f}</b></div>')
+        lines.append(f'<div class="tot"><span>Total payout</span><b>${r._7:,.2f}</b></div>')
+        cards.append(
+            f'<div class="pp"><div class="pp-top"><span class="pp-name">{esc(r.Sales)}</span>'
+            f'<span class="pp-cnt">{plural(n, "deposit") if n else "matching / group"}</span></div>'
+            f'<div class="pp-amt">${(r.Total if n else r._7):,.{0 if n else 2}f}</div><div class="pp-sub">'
+            f'{f"${float(base.get(r.Sales, 0) or 0):,.0f} commissionable" if n else "paid on others&#39; sales"}</div>'
+            f'<div class="pp-lines">{"".join(lines)}</div></div>')
+    st.markdown('<div class="card-h" style="margin-top:.2rem">By salesperson<span>details for anyone: click their name '
+                'in the Week summary below</span></div><div class="pp-grid">' + "".join(cards) + "</div>",
+                unsafe_allow_html=True)
+
+
 def page_commissions():
     h1, h2 = st.columns([4, 1], vertical_alignment="bottom")
     h1.title("Commissions")
@@ -3236,23 +3513,8 @@ def page_commissions():
                "Commissions**. " + (f"Last synced from the file {us_time(synced.tz_convert('America/Chicago'))}."
                                      if synced is not None else ""))
 
-    st.session_state.setdefault("cm_preset", "Last week")
-    st.session_state.setdefault("cm_week", None)
-    if st.session_state.get("cm_week") not in [None] + comm_week_options():
-        st.session_state["cm_week"] = None
-
-    def _p_changed():
-        st.session_state["cm_week"] = None
-
-    def _w_changed():
-        if st.session_state.get("cm_week"):
-            st.session_state["cm_preset"] = None
-
-    f = st.columns([2.2, 2.0, 2.2, 2.0])
-    f[0].segmented_control("Dates", COMM_PRESETS, key="cm_preset", on_change=_p_changed)
-    f[1].selectbox("Broadcast week", comm_week_options(), key="cm_week", index=None, placeholder="Pick a week…",
-                   format_func=bweek_label, on_change=_w_changed)
-    start, end = _comm_range()
+    f = st.columns([2.4, 5.6])
+    start, end = g_range()
     deps = load_deposits(start, end)
     rates = load_commission_rates()
     overrides = load_commission_overrides()
@@ -3260,15 +3522,12 @@ def page_commissions():
     grouped = load_commission_group()
     group_mult = load_group_multiplier()
     managers = load_commission_managers()
-    rep_pick = f[2].multiselect("Salesperson", sorted(deps["salesperson"].dropna().unique()),
+    rep_pick = f[0].multiselect("Salesperson", sorted(deps["salesperson"].dropna().unique()),
                                 placeholder="All salespeople", key="cm_reps")
 
-    when = f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}"
-    if st.session_state.get("cm_week") or st.session_state.get("cm_preset") in ("This week", "Last week"):
-        when = f"Week {bweek_number(start)} · {when}"
-    week_view = bool(st.session_state.get("cm_week") or st.session_state.get("cm_preset") in ("This week", "Last week"))
+    when = g_when()
+    week_view = g_is_week()
     all_deps = _prep_deps(deps, rates, overrides, matching, grouped)
-    _email_button(h2, all_deps, managers, group_mult, start, end, week_view)
     deps = all_deps
     if rep_pick:
         deps = deps[deps["salesperson"].isin(rep_pick)].reset_index(drop=True)
@@ -3285,7 +3544,15 @@ def page_commissions():
     total_base = float(deps["base"].fillna(0).sum())
     total_comm = float(deps["commission"].sum())
     total_mgr = float(mgr_ov["override"].sum()) if not mgr_ov.empty else 0.0
-    kpi_cards([
+    k1, k2 = st.columns([3.1, 1], gap="medium")
+    with k2, st.container(border=True, key="pm_email"):
+        wk = bweek_number(start)
+        st.markdown(f'<div class="em-h">Week {wk} breakdown</div><div class="em-t">Ready to send to Tony</div>'
+                    if week_view else '<div class="em-h">Weekly breakdown</div>'
+                                      '<div class="em-t">Pick one week to email Tony</div>', unsafe_allow_html=True)
+        _email_button(st, all_deps, managers, group_mult, start, end, week_view)
+    with k1:
+        kpi_cards([
         {"label": "Deposits", "value": f"{len(deps):,}", "note": when},
         {"label": "Total deposited", "value": f"${total_dep:,.0f}", "note": ""},
         {"label": "Commissionable", "value": f"${total_base:,.0f}", "note": ""},
@@ -3293,6 +3560,25 @@ def page_commissions():
          "note": f"${total_comm:,.2f} commissions + ${total_mgr:,.2f} matching"
                  + (f" + ${total_grp:,.2f} group" if total_grp else ""), "alert": True},
     ])
+    own = deps.groupby("salesperson").agg(Deposits=("row_id", "size"), Total=("deposit_amount", "sum"),
+                                          Commission=("commission", "sum"))
+    ovs = mgr_ov.groupby("manager")["override"].sum() if not mgr_ov.empty else pd.Series(dtype=float)
+    people = sorted(set(own.index) | set(ovs.index) | set(managers["manager"]) | ({GROUP_PAYEE} if total_grp else set()))
+    summary = pd.DataFrame({
+        "Sales": people,
+        "Deposits": [int(own["Deposits"].get(p, 0)) for p in people],
+        "Total": [float(own["Total"].get(p, 0.0)) for p in people],
+        "Commission": [round(float(own["Commission"].get(p, 0.0)), 2) for p in people],
+        "Matching": [round(float(ovs.get(p, 0.0)), 2) for p in people],
+        "Group": [round(total_grp, 2) if p == GROUP_PAYEE else 0.0 for p in people],
+    })
+    summary["Total Payout"] = (summary["Commission"] + summary["Matching"] + summary["Group"]).round(2)
+    summary = pd.concat([summary, pd.DataFrame([{
+        "Sales": "TOTAL", "Deposits": len(deps), "Total": total_dep, "Commission": round(total_comm, 2),
+        "Matching": round(total_mgr, 2), "Group": round(total_grp, 2),
+        "Total Payout": round(total_comm + total_mgr + total_grp, 2)}])], ignore_index=True)
+
+    person_cards(deps, summary, rates, end)
     missing = sorted(deps.loc[deps["pct"].isna(), "salesperson"].dropna().unique())
     if missing:
         st.warning("No commission rate set for: " + ", ".join(missing)
@@ -3375,24 +3661,6 @@ def page_commissions():
             for r in deps[deps["overridden"]].itertuples()))
 
     # ---------- week summary + person detail ----------
-    own = deps.groupby("salesperson").agg(Deposits=("row_id", "size"), Total=("deposit_amount", "sum"),
-                                          Commission=("commission", "sum"))
-    ovs = mgr_ov.groupby("manager")["override"].sum() if not mgr_ov.empty else pd.Series(dtype=float)
-    people = sorted(set(own.index) | set(ovs.index) | set(managers["manager"]) | ({GROUP_PAYEE} if total_grp else set()))
-    summary = pd.DataFrame({
-        "Sales": people,
-        "Deposits": [int(own["Deposits"].get(p, 0)) for p in people],
-        "Total": [float(own["Total"].get(p, 0.0)) for p in people],
-        "Commission": [round(float(own["Commission"].get(p, 0.0)), 2) for p in people],
-        "Matching": [round(float(ovs.get(p, 0.0)), 2) for p in people],
-        "Group": [round(total_grp, 2) if p == GROUP_PAYEE else 0.0 for p in people],
-    })
-    summary["Total Payout"] = (summary["Commission"] + summary["Matching"] + summary["Group"]).round(2)
-    summary = pd.concat([summary, pd.DataFrame([{
-        "Sales": "TOTAL", "Deposits": len(deps), "Total": total_dep, "Commission": round(total_comm, 2),
-        "Matching": round(total_mgr, 2), "Group": round(total_grp, 2),
-        "Total Payout": round(total_comm + total_mgr + total_grp, 2)}])], ignore_index=True)
-
     st.markdown("**Week summary**")
     sl, sr = st.columns([1.5, 1], gap="large")
 
@@ -3579,9 +3847,153 @@ def page_assign_commissions():
 
 
 # =====================================================================================
+# SHARED TOP BAR: one search box, one team and one date range for every tab
+# =====================================================================================
+G_PRESETS = ["Yesterday", "This week", "Last week", "This month", "Custom"]
+
+
+def _g_init():
+    y = date.today() - timedelta(days=1)
+    for k, v in {"g_preset": "Yesterday", "g_week": None, "g_custom": (y, y)}.items():
+        st.session_state.setdefault(k, v)
+    if st.session_state.get("g_week") not in [None] + att_week_options():
+        st.session_state["g_week"] = None
+
+
+def g_range() -> tuple:
+    """The date range picked in the top bar (shared by every tab)."""
+    _g_init()
+    ss, today = st.session_state, date.today()
+    p = ss.get("g_preset")
+    if p == "This week":
+        return bweek_monday(today), today
+    if p == "Last week":
+        m = bweek_monday(today) - timedelta(days=7)
+        return m, m + timedelta(days=6)
+    if p == "This month":
+        return today.replace(day=1), today
+    if p == "Custom":
+        c = ss.get("g_custom")
+        if isinstance(c, (list, tuple)) and len(c) == 2:
+            return c[0], c[1]
+        if isinstance(c, (list, tuple)) and len(c) == 1:
+            return c[0], c[0]
+    w = ss.get("g_week")
+    if p is None and w:
+        return w, min(w + timedelta(days=6), today)
+    y = today - timedelta(days=1)
+    return y, y
+
+
+def g_is_week() -> bool:
+    p = st.session_state.get("g_preset")
+    return p in ("This week", "Last week") or (p is None and bool(st.session_state.get("g_week")))
+
+
+def g_when() -> str:
+    s, e = g_range()
+    txt = f"{s:%m/%d/%Y}" if s == e else f"{s:%m/%d/%Y} – {e:%m/%d/%Y}"
+    return f"Week {bweek_number(s)} · {txt}" if g_is_week() else txt
+
+
+def _g_preset_changed():
+    ss = st.session_state
+    p = ss.get("g_preset")
+    if p in ("This week", "Last week"):
+        ss["g_week"] = g_range()[0]
+    elif p is not None:
+        ss["g_week"] = None
+    elif not ss.get("g_week"):
+        ss["g_preset"] = "Yesterday"
+
+
+def _g_week_label(m: date) -> str:
+    return f"Week {bweek_number(m)}"
+
+
+def _g_week_changed():
+    st.session_state["g_preset"] = None if st.session_state.get("g_week") else "Yesterday"
+
+
+def _g_step(n: int):
+    ss, this = st.session_state, bweek_monday(date.today())
+    m = bweek_monday(g_range()[0]) + timedelta(days=7 * n)
+    m = max(min(m, this), ATT_FIRST_WEEK)
+    ss["g_week"] = m
+    ss["g_preset"] = "This week" if m == this else "Last week" if m == this - timedelta(days=7) else None
+
+
+def g_team_reps():
+    """Reps in the team picked in the top bar, or None for Everyone."""
+    team = st.session_state.get("g_team") or EVERYONE
+    return None if team == EVERYONE else load_rep_teams().get(team, set())
+
+
+def _g_search():
+    q = (st.session_state.get("g_search") or "").strip()
+    if q:
+        st.session_state["ls_q"] = q
+        st.session_state["_go_search"] = True
+    st.session_state["g_search"] = ""
+
+
+def top_bar(dates: bool = True, team: bool = False, search: bool = True):
+    _g_init()
+    if team:
+        teams = load_rep_teams()
+        team_opts = [EVERYONE] + sorted(teams)
+        if st.session_state.get("g_team") not in team_opts:
+            st.session_state["g_team"] = "Sales Team" if "Sales Team" in teams else EVERYONE
+    spec = ([("search", 1.35)] if search else []) + ([("team", 1.5)] if team else []) + \
+        ([("preset", 4.85), ("prev", .3), ("week", 2.0), ("next", .3)] if dates else [])
+    if not spec:
+        return
+    if not dates:
+        spec = [("search", 3.2), ("gap", 6.8)] if search else spec
+    with st.container(key="pm_topbar"):
+        cols = st.columns([w for _, w in spec], vertical_alignment="center", gap="small")
+        for (name, _), c in zip(spec, cols):
+            if name == "search":
+                c.text_input("Search", key="g_search", on_change=_g_search, label_visibility="collapsed",
+                             icon=":material/search:", placeholder="Search",
+                             help="Search MMS for a phone number, company, name or lead ID")
+            elif name == "team":
+                c.selectbox("Team", team_opts, key="g_team", label_visibility="collapsed",
+                            help="Team")
+            elif name == "preset":
+                c.segmented_control("Dates", G_PRESETS, key="g_preset", on_change=_g_preset_changed,
+                                    label_visibility="collapsed")
+            elif name == "prev":
+                c.button("‹", key="g_prev", on_click=_g_step, args=(-1,), help="Previous broadcast week",
+                         width="stretch")
+            elif name == "week":
+                c.selectbox("Broadcast week", att_week_options(), key="g_week", index=None, format_func=_g_week_label,
+                            placeholder="Broadcast week", on_change=_g_week_changed,
+                            label_visibility="collapsed")
+            elif name == "next":
+                c.button("›", key="g_next", on_click=_g_step, args=(1,), help="Next broadcast week", width="stretch",
+                         disabled=bweek_monday(g_range()[0]) >= bweek_monday(date.today()))
+        if dates and st.session_state.get("g_preset") == "Custom":
+            cc = st.columns([2.4, 7.6], vertical_alignment="center")
+            cc[0].date_input("Custom dates", key="g_custom", format="MM/DD/YYYY", label_visibility="collapsed")
+            cc[1].caption("Pick a start and an end date")
+    if st.session_state.pop("_go_search", False):
+        st.switch_page(PAGE_LEAD_SEARCH)
+
+
+def with_bar(fn, **kw):
+    """Run a page with the shared top bar above it."""
+    def run():
+        top_bar(**kw)
+        fn()
+    run.__name__ = fn.__name__
+    return run
+
+
+# =====================================================================================
 # NAVIGATION
 # =====================================================================================
-PAGE_CALL_LOG = st.Page(page_call_log, title="Call Log", icon=":material/list_alt:", url_path="call-log")
+PAGE_CALL_LOG = st.Page(with_bar(page_call_log, team=True), title="Call Log", icon=":material/list_alt:", url_path="call-log")
 
 if st.session_state.get("role", "admin") == "viewer":
     # management: only the Call Log, no sidebar, nothing that changes data
@@ -3601,7 +4013,8 @@ if st.session_state.get("role", "admin") == "viewer":
     st.markdown(f'''<div class="pm-top"><img src="{LOGO_WHITE_URI}" alt="Primedia Network"><div class="sp"></div>
 <span class="ro">Management view · read only</span>
 {f'<span class="upd"><span class="dot"></span>{esc(_upd)}</span>' if _upd else ""}</div>''', unsafe_allow_html=True)
-    st.navigation([st.Page(page_call_log, title="Call Log", icon=":material/list_alt:", url_path="call-log",
+    st.navigation([st.Page(with_bar(page_call_log, team=True, search=False), title="Call Log",
+                           icon=":material/list_alt:", url_path="call-log",
                            default=True)], position="hidden").run()
     st.stop()
 
@@ -3614,25 +4027,25 @@ except Exception:
     _review_n = 0
 nav = st.navigation({
     "Reports": [
-        st.Page(page_call_report, title="Call Report", icon=":material/call:", url_path="call-report",
+        st.Page(with_bar(page_call_report, team=True), title="Call Report", icon=":material/call:", url_path="call-report",
                 default=True),
         PAGE_CALL_LOG,
-        st.Page(page_commissions, title="Commissions", icon=":material/payments:", url_path="commissions"),
-        st.Page(page_att_calls, title="ATT Calls", icon=":material/phone_in_talk:", url_path="att-calls"),
+        st.Page(with_bar(page_commissions), title="Commissions", icon=":material/payments:", url_path="commissions"),
+        st.Page(with_bar(page_att_calls), title="ATT Calls", icon=":material/phone_in_talk:", url_path="att-calls"),
     ],
     "Lookup": [
         PAGE_LEAD_SEARCH,
-        st.Page(page_needs_review, title=f"Needs Review ({_review_n})" if _review_n else "Needs Review",
+        st.Page(with_bar(page_needs_review, dates=False), title=f"Needs Review ({_review_n})" if _review_n else "Needs Review",
                 icon=":material/flag:", url_path="needs-review"),
     ],
     "Manage": [
-        st.Page(page_contacts, title="Contacts", icon=":material/contacts:", url_path="contacts"),
-        st.Page(page_toll_routing, title="Toll Routing", icon=":material/alt_route:", url_path="toll-routing"),
-        st.Page(page_toll_sources, title="Toll Sources", icon=":material/sell:", url_path="toll-sources"),
-        st.Page(page_assign_commissions, title="Assign Commissions", icon=":material/percent:",
+        st.Page(with_bar(page_contacts, dates=False), title="Contacts", icon=":material/contacts:", url_path="contacts"),
+        st.Page(with_bar(page_toll_routing, dates=False), title="Toll Routing", icon=":material/alt_route:", url_path="toll-routing"),
+        st.Page(with_bar(page_toll_sources, dates=False), title="Toll Sources", icon=":material/sell:", url_path="toll-sources"),
+        st.Page(with_bar(page_assign_commissions, dates=False), title="Assign Commissions", icon=":material/percent:",
                 url_path="assign-commissions"),
-        st.Page(page_upload_calls, title="Upload Calls", icon=":material/upload_file:", url_path="upload-calls"),
-        st.Page(page_upload_leads, title="Upload Leads", icon=":material/group_add:", url_path="upload-leads"),
+        st.Page(with_bar(page_upload_calls, dates=False), title="Upload Calls", icon=":material/upload_file:", url_path="upload-calls"),
+        st.Page(with_bar(page_upload_leads, dates=False), title="Upload Leads", icon=":material/group_add:", url_path="upload-leads"),
     ],
 })
 
