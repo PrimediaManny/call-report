@@ -274,6 +274,32 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .rchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
 .rchips span { background: var(--pm-light); color: var(--pm-ink); border-radius: 8px; padding: 4px 10px; font-size: .8rem; }
 .rchips b { color: var(--pm-blue); margin-right: 3px; }
+/* ---- Appointments ---- */
+.ap-colh { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.ap-colh .av { width: 34px; height: 34px; border-radius: 50%; background: var(--pm-light); color: var(--pm-blue);
+               font-weight: 700; font-size: .72rem; display: flex; align-items: center; justify-content: center; flex: none; }
+.ap-colh b { font-size: .92rem; color: var(--pm-ink); display: block; }
+.ap-colh span { font-size: .75rem; color: var(--pm-mute); }
+.ap-day { font-size: .68rem; font-weight: 700; letter-spacing: .07em; color: var(--pm-mute); margin: 8px 0 -6px; text-transform: uppercase; }
+.ap { border: 1px solid var(--pm-line); border-left: 3px solid var(--pm-blue); border-radius: 10px; padding: 9px 11px;
+      background: #FBFCFF; margin-bottom: -10px; }
+.ap.done { border-left-color: #137A43; } .ap.noshow { border-left-color: #C0392B; } .ap.cxl { border-left-color: #9CA3AF; opacity: .7; }
+.ap-t { display: flex; justify-content: space-between; gap: 6px; font-size: .74rem; color: var(--pm-mute); }
+.ap-t b { color: var(--pm-blue); font-weight: 700; }
+.ap-c { font-size: .86rem; font-weight: 700; color: var(--pm-ink); margin-top: 2px; line-height: 1.3; }
+.ap-p { font-size: .75rem; color: var(--pm-mute); }
+.st { display: inline-block; font-size: .7rem; font-weight: 700; border-radius: 6px; padding: 2px 7px; }
+.st.showed, .st.sold { background: #E3F6EA; color: #137A43; } .st.no_show { background: #FDECEA; color: #C0392B; }
+.st.canceled { background: #F1F1F3; color: #5F6168; } .st.rescheduled { background: #FFF4E0; color: #9A5B00; }
+.bd.warn { background: #FDECEA; color: #C0392B; }
+.un { background: #FFF7EA; border: 1px solid #F5C77A; border-radius: 14px; padding: 12px 14px; }
+.un-c { font-weight: 700; color: var(--pm-ink); font-size: .92rem; margin-top: 2px; }
+.un-m { font-size: .78rem; color: #8a4b00; }
+.sug { font-size: .74rem; color: #137A43; font-weight: 600; margin-top: 4px; }
+[class*="st-key-ap_col_"] { background: #fff; border-radius: 16px !important; }
+[class*="st-key-ap_open_"] button { padding: 0 !important; min-height: 1.6rem !important; font-size: .78rem !important;
+                                   color: var(--pm-blue) !important; justify-content: flex-end; width: 100%; }
+[class*="st-key-ap_open_"] button p { font-size: .78rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -4046,6 +4072,275 @@ def with_bar(fn, **kw):
 
 
 # =====================================================================================
+# APPOINTMENTS (admin only for now) - Calendly bookings, assigned to reps, linked to the call log
+# =====================================================================================
+APPT_STATUS = {"scheduled": "Scheduled", "showed": "Showed", "no_show": "No-show", "rescheduled": "Rescheduled",
+               "canceled": "Canceled", "sold": "Sold"}
+CENTRAL = "America/Chicago"
+
+
+def _digits10(v) -> str:
+    d = "".join(ch for ch in str(v or "") if ch.isdigit())
+    return d[-10:] if len(d) >= 10 else ""
+
+
+@st.cache_data(ttl=120, show_spinner="Loading appointments...")
+def load_appointments(start: date, end: date) -> pd.DataFrame:
+    lo = pd.Timestamp(start).tz_localize(CENTRAL).tz_convert("UTC").isoformat()
+    hi = (pd.Timestamp(end) + pd.Timedelta(days=1)).tz_localize(CENTRAL).tz_convert("UTC").isoformat()
+    data = (sb.table("appointments").select("*").gte("start_time", lo).lt("start_time", hi)
+            .order("start_time").execute().data)
+    df = pd.DataFrame(data, columns=["id", "invitee_uri", "event_type", "start_time", "end_time", "invitee_name",
+                                     "invitee_email", "invitee_phone", "company", "answers", "status", "lead_id",
+                                     "suggested_rep", "assigned_rep", "notes", "booked_at"])
+    if df.empty:
+        return df
+    df = df.astype(object).where(df.notna(), None)
+    df["start"] = pd.to_datetime(df["start_time"], utc=True).dt.tz_convert(CENTRAL).dt.tz_localize(None)
+    df["phone10"] = df["invitee_phone"].map(_digits10)
+    return df
+
+
+def link_calls(appts: pd.DataFrame, calls: pd.DataFrame) -> pd.DataFrame:
+    """For each appointment, find the rep's call to that lead / number on the appointment day
+    (from 30 minutes before to 3 hours after). Adds: call_status, call_at, call_by, call_len."""
+    appts = appts.copy()
+    appts["call_status"], appts["call_at"], appts["call_by"], appts["call_len"] = "", pd.NaT, "", ""
+    now = pd.Timestamp.now(tz=CENTRAL).tz_localize(None)
+    c = calls.copy() if calls is not None and not calls.empty else pd.DataFrame(columns=["Date/Time", "To", "From", "Duration", "Lead Id"])
+    if not c.empty:
+        c["_p"] = c["To"].map(_digits10)
+        c["_t"] = pd.to_datetime(c["Date/Time"])
+    for i, a in appts.iterrows():
+        hit = pd.DataFrame()
+        if not c.empty:
+            same = (c["Lead Id"].astype(str) == str(a["lead_id"])) if a["lead_id"] else False
+            if a["phone10"]:
+                same = same | (c["_p"] == a["phone10"])
+            win = (c["_t"] >= a["start"] - pd.Timedelta(minutes=30)) & (c["_t"] <= a["start"] + pd.Timedelta(hours=3))
+            hit = c[same & win] if not isinstance(same, bool) else pd.DataFrame()
+            if not hit.empty and a["assigned_rep"]:
+                mine = hit[hit["From"].astype(str) == str(a["assigned_rep"])]
+                hit = mine if not mine.empty else hit
+        if not hit.empty:
+            h = hit.sort_values("_t").iloc[0]
+            appts.at[i, "call_status"] = "called"
+            appts.at[i, "call_at"], appts.at[i, "call_by"] = h["_t"], str(h["From"])
+            appts.at[i, "call_len"] = _short_len(h["Duration"])
+        elif a["status"] == "canceled":
+            appts.at[i, "call_status"] = "canceled"
+        elif a["start"] > now:
+            appts.at[i, "call_status"] = "upcoming"
+        else:
+            appts.at[i, "call_status"] = "not_called"
+    return appts
+
+
+def _appt_badges(a) -> str:
+    cs = a["call_status"]
+    call = {"called": f'<span class="bd own">📞 Called {us_time(a["call_at"], False)} · {esc(a["call_len"])}</span>',
+            "not_called": '<span class="bd warn">Not called</span>',
+            "upcoming": '<span class="bd new">Upcoming</span>',
+            "canceled": ""}.get(cs, "")
+    stt = a["status"] or "scheduled"
+    out = f'<span class="st {stt}">{APPT_STATUS.get(stt, stt)}</span>' if stt != "scheduled" else ""
+    return call + out
+
+
+def _rep_options() -> list:
+    return sorted(load_rep_teams().get("Sales Team", set()))
+
+
+def _assign(appt_id: int, key: str):
+    rep = st.session_state.get(key)
+    if rep:
+        sb.table("appointments").update({"assigned_rep": rep, "assigned_at": pd.Timestamp.now("UTC").isoformat(),
+                                         "updated_at": pd.Timestamp.now("UTC").isoformat()}).eq("id", appt_id).execute()
+        load_appointments.clear()
+        st.session_state["ap_toast"] = f"Assigned to {rep}"
+
+
+@st.dialog("Appointment", width="medium", position="right")
+def appt_drawer(a, calls: pd.DataFrame):
+    st.markdown('<div class="pm-drawer"></div>', unsafe_allow_html=True)
+    day = a["start"]
+    st.markdown(f'<div class="lc-id">{esc(str(a["event_type"] or "").upper())}</div>'
+                f'<div class="dname">{esc(a["company"] or a["invitee_name"] or "")}</div>'
+                f'<div class="bds"><span class="bd new">{day:%a %b} {day.day} · {us_time(day, False)}</span>'
+                f'{_appt_badges(a)}{f"<span class=bd>Lead {esc(a.lead_id)}</span>" if a["lead_id"] else ""}</div>',
+                unsafe_allow_html=True)
+    kv = [("Contact", a["invitee_name"]), ("Phone", fmt_phone(a["invitee_phone"]) if a["invitee_phone"] else ""),
+          ("Email", a["invitee_email"]), ("Lead owner", a["suggested_rep"]),
+          ("Called", f"{us_time(a['call_at'])} by {a['call_by']} · {a['call_len']}" if a["call_status"] == "called" else "")]
+    rows = "".join(f"<span>{k}</span><span>{esc(v)}</span>" for k, v in kv if v)
+    if rows:
+        st.markdown(f"<div class='dkv'>{rows}</div>", unsafe_allow_html=True)
+    if a["answers"]:
+        st.markdown(f"<div class='dsec'>What they told Calendly</div><div class='dkv' style='display:block;font-weight:400'>"
+                    f"{esc(a['answers'])}</div>", unsafe_allow_html=True)
+    reps = _rep_options()
+    stt = list(APPT_STATUS)
+    with st.form(f"ap_form_{a['id']}", border=False):
+        c1, c2 = st.columns(2)
+        rep = c1.selectbox("Assigned rep", reps, index=reps.index(a["assigned_rep"]) if a["assigned_rep"] in reps else None,
+                           placeholder="Pick a rep…")
+        out = c2.selectbox("Show / no-show", stt, index=stt.index(a["status"]) if a["status"] in stt else 0,
+                           format_func=lambda s: APPT_STATUS[s])
+        notes = st.text_area("Notes", value=a["notes"] or "", placeholder="Anything management should know…", height=80)
+        if st.form_submit_button("Save", type="primary", width="stretch"):
+            upd = {"status": out, "notes": notes or None, "updated_at": pd.Timestamp.now("UTC").isoformat()}
+            if rep and rep != a["assigned_rep"]:
+                upd.update({"assigned_rep": rep, "assigned_at": pd.Timestamp.now("UTC").isoformat()})
+            sb.table("appointments").update(upd).eq("id", int(a["id"])).execute()
+            load_appointments.clear()
+            st.session_state["ap_toast"] = "Appointment saved"
+            st.rerun()
+    if a["lead_id"]:
+        hist = calls_to_lead_in_month(str(a["lead_id"]), day.date().replace(day=1))
+        st.markdown(f"<div class='dsec'>Calls to this lead in {day:%B} · {len(hist)}</div>{timeline_html(hist, 30)}",
+                    unsafe_allow_html=True)
+        full_lead_button(str(a["lead_id"]), "ap")
+    else:
+        st.caption("This booking isn't matched to an MMS lead yet.")
+
+
+def page_appointments():
+    start, end = g_range()
+    toast = st.session_state.pop("ap_toast", None)
+    if toast:
+        st.toast(toast, icon=":material/check_circle:")
+    h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
+    with h1:
+        st.title("Appointments")
+        st.caption(f"Calendly bookings for **{esc(g_when())}**, assigned to a rep and checked against the call log. "
+                   "New bookings arrive on their own.")
+    view_mode = h2.segmented_control("View", ["By rep", "List"], default="By rep", key="ap_view",
+                                     label_visibility="collapsed") or "By rep"
+    appts = load_appointments(start, end)
+    if appts.empty:
+        st.info(f"No appointments for {g_when()}.")
+        return
+    calls = load_calls(start, end)
+    if not calls.empty:
+        calls = apply_rep_names(calls)
+    appts = link_calls(appts, calls)
+    ps, pe, cmp_label = prev_range(start, end)
+    prev_n = len(load_appointments(ps, pe))
+
+    live = appts[appts["status"] != "canceled"]
+    done = appts[appts["start"] <= pd.Timestamp.now(tz=CENTRAL).tz_localize(None)]
+    done = done[done["status"] != "canceled"]
+    called = int((done["call_status"] == "called").sum())
+    showed = int((appts["status"].isin(["showed", "sold"])).sum())
+    marked = int((appts["status"].isin(["showed", "sold", "no_show"])).sum())
+    unassigned = appts[appts["assigned_rep"].isna() | (appts["assigned_rep"] == "")]
+    kpi_cards([
+        {"label": "Booked", "value": f"{len(live):,}{delta_html(len(live), prev_n)}",
+         "note": f"vs {prev_n:,} {cmp_label}" + (f" · {int((appts['status'] == 'canceled').sum())} canceled"
+                                                   if (appts["status"] == "canceled").any() else "")},
+        {"label": "📞 Called on time", "value": f"{called:,}" + (f"<span class='dl'>{called / len(done):.0%}</span>" if len(done) else ""),
+         "note": f"of {len(done):,} past appointments · {len(done) - called:,} not called"},
+        {"label": "Showed", "value": f"{showed:,}", "note": f"{marked:,} marked show / no-show so far"},
+        {"label": "⚑ Needs a rep", "value": f"{len(unassigned):,}", "note": "assign them below" if len(unassigned) else "all assigned",
+         "alert": len(unassigned) > 0},
+    ])
+
+    reps = _rep_options()
+    if not unassigned.empty:
+        st.markdown('<div class="card-h">Needs a rep<span>suggested = owner of the MMS lead</span></div>',
+                    unsafe_allow_html=True)
+        per = 3
+        items = list(unassigned.iterrows())
+        for k in range(0, len(items), per):
+            cols = st.columns(per, gap="small")
+            for col, (_, a) in zip(cols, items[k:k + per]):
+                d = a["start"]
+                sug = a["suggested_rep"]
+                note = (f'<div class="sug">Lead {esc(a.lead_id)} · owner {esc(sug)}'
+                        f'{"" if sug in reps else " (not on the Sales Team)"}</div>' if sug else
+                        '<div class="sug" style="color:#B45309">No MMS lead found for this booking</div>')
+                with col:
+                    st.markdown(f'<div class="un"><div class="ap-t"><span>{d:%a %b} {d.day} · {us_time(d, False)}</span>'
+                                f'<b>{esc(a["event_type"] or "")}</b></div><div class="un-c">{esc(a["company"] or a["invitee_name"])}</div>'
+                                f'<div class="un-m">{esc(a["invitee_name"] or "")}{" · " + fmt_phone(a["invitee_phone"]) if a["invitee_phone"] else ""}</div>'
+                                f'{note}</div>', unsafe_allow_html=True)
+                    x, y = st.columns([2.2, 1], vertical_alignment="bottom")
+                    key = f"ap_rep_{a['id']}"
+                    x.selectbox("Rep", reps, index=None, placeholder="Pick a rep…", key=key, label_visibility="collapsed")
+                    y.button("Assign", type="primary", key=f"ap_as_{a['id']}", width="stretch", on_click=_assign,
+                             args=(int(a["id"]), key))
+        st.write("")
+
+    assigned = appts[~appts.index.isin(unassigned.index)]
+    if view_mode == "List":
+        table = pd.DataFrame({
+            "When": appts["start"], "Company": appts["company"].fillna(""), "Contact": appts["invitee_name"].fillna(""),
+            "Number": appts["invitee_phone"].map(lambda v: fmt_phone(v) if v else ""),
+            "Rep": appts["assigned_rep"].fillna("— needs a rep"), "Lead ID": appts["lead_id"].fillna(""),
+            "Call": appts.apply(lambda a: {"called": f"Called {a['call_len']}", "not_called": "Not called",
+                                           "upcoming": "Upcoming", "canceled": "—"}[a["call_status"]], axis=1),
+            "Show / no-show": appts["status"].map(lambda s: APPT_STATUS.get(s, s)),
+        })
+
+        def _css(frame):
+            css = pd.DataFrame("", index=frame.index, columns=frame.columns)
+            css["Company"] = "font-weight: 600"
+            for i, v in frame["Call"].items():
+                css.at[i, "Call"] = ("background-color:#E3F6EA;color:#137A43;font-weight:600" if v.startswith("Called") else
+                                     "background-color:#FDECEA;color:#C0392B;font-weight:600" if v == "Not called" else "")
+            for i, v in frame["Rep"].items():
+                if v.startswith("—"):
+                    css.at[i, "Rep"] = "background-color:#FFF4E0;color:#9a5b00;font-weight:600"
+            return css
+        ev = st.dataframe(table.style.apply(_css, axis=None), hide_index=True, width="stretch",
+                          height=min(40 + 35 * len(table), 680), on_select="rerun", selection_mode="single-row",
+                          key=f"ap_tbl_{start}_{end}_{len(table)}",
+                          column_config={"When": st.column_config.DatetimeColumn(format="ddd M/D h:mm A", width=135)})
+        st.caption("Click an appointment to open it")
+        sel = ev.selection.rows if ev and ev.selection else []
+        if drawer_trigger("ap", f"{start}{end}-{appts.iloc[sel[0]]['id']}" if sel else None):
+            appt_drawer(appts.iloc[sel[0]], calls)
+        return
+
+    st.markdown('<div class="card-h">By rep<span>📞 = the rep called the lead within 3 hours of the appointment time · '
+                'Open an appointment to mark show / no-show</span></div>', unsafe_allow_html=True)
+    team = [r for r in reps if (assigned["assigned_rep"] == r).any()] + \
+           sorted(set(assigned["assigned_rep"].dropna()) - set(reps))
+    if not team:
+        st.caption("No assigned appointments in this range.")
+        return
+    for k in range(0, len(team), 4):
+        cols = st.columns(4, gap="small")
+        for j, (col, rep) in enumerate(zip(cols, team[k:k + 4])):
+            mine = assigned[assigned["assigned_rep"] == rep].sort_values("start")
+            ini = "".join(w[0] for w in rep.split()[:2]).upper()
+            n_called = int((mine["call_status"] == "called").sum())
+            n_past = int(mine["call_status"].isin(["called", "not_called"]).sum())
+            with col, st.container(border=True, key=f"ap_col_{k + j}"):
+                st.markdown(f'<div class="ap-colh"><div class="av">{ini}</div><div><b>{esc(rep)}</b>'
+                            f'<span>{plural(len(mine), "appointment")} · called {n_called}/{n_past}</span></div></div>',
+                            unsafe_allow_html=True)
+                last = None
+                for _, a in mine.iterrows():
+                    d = a["start"]
+                    if d.date() != last:
+                        st.markdown(f'<div class="ap-day">{d:%A} · {d:%b} {d.day}</div>', unsafe_allow_html=True)
+                        last = d.date()
+                    cls = {"called": "done", "not_called": "noshow", "canceled": "cxl"}.get(a["call_status"], "")
+                    st.markdown(f'<div class="ap {cls}"><div class="ap-t"><b>{us_time(d, False)}</b>'
+                                f'<span>{esc(fmt_phone(a["invitee_phone"]) if a["invitee_phone"] else "")}</span></div>'
+                                f'<div class="ap-c">{esc(a["company"] or a["invitee_name"] or "")}</div>'
+                                f'<div class="ap-p">{esc(a["invitee_name"] or "")}{" · lead " + esc(a["lead_id"]) if a["lead_id"] else ""}</div>'
+                                f'<div class="bds" style="margin:6px 0 0">{_appt_badges(a)}</div></div>', unsafe_allow_html=True)
+                    if st.button("Open", key=f"ap_open_{a['id']}", type="tertiary", icon=":material/open_in_new:"):
+                        st.session_state["ap_open"] = int(a["id"])
+    if st.session_state.get("ap_open"):
+        pick = appts[appts["id"] == st.session_state.pop("ap_open")]
+        if not pick.empty:
+            appt_drawer(pick.iloc[0], calls)
+
+
+# =====================================================================================
 # NAVIGATION
 # =====================================================================================
 PAGE_CALL_LOG = st.Page(with_bar(page_call_log, team=True), title="Call Log", icon=":material/list_alt:", url_path="call-log")
@@ -4080,11 +4375,18 @@ try:
     _review_n = len(load_needs_review(30))
 except Exception:
     _review_n = 0
+try:   # appointments still waiting for a rep (shows as a count in the menu)
+    _appt_n = len(sb.table("appointments").select("id").is_("assigned_rep", "null").neq("status", "canceled")
+                  .execute().data)
+except Exception:
+    _appt_n = 0
 nav = st.navigation({
     "Reports": [
         st.Page(with_bar(page_call_report, team=True), title="Call Report", icon=":material/call:", url_path="call-report",
                 default=True),
         PAGE_CALL_LOG,
+        st.Page(with_bar(page_appointments), title=f"Appointments ({_appt_n})" if _appt_n else "Appointments",
+                icon=":material/event:", url_path="appointments"),
         st.Page(with_bar(page_commissions), title="Commissions", icon=":material/payments:", url_path="commissions"),
         st.Page(with_bar(page_att_calls), title="ATT Calls", icon=":material/phone_in_talk:", url_path="att-calls"),
     ],
