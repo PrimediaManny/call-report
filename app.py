@@ -4179,11 +4179,13 @@ def appt_drawer(a, calls: pd.DataFrame):
         st.markdown(f"<div class='dsec'>What they told Calendly</div><div class='dkv' style='display:block;font-weight:400'>"
                     f"{esc(a['answers'])}</div>", unsafe_allow_html=True)
     reps = _rep_options()
+    if a["assigned_rep"] and a["assigned_rep"] not in reps:
+        reps = reps + [a["assigned_rep"]]
     stt = list(APPT_STATUS)
     with st.form(f"ap_form_{a['id']}", border=False):
         c1, c2 = st.columns(2)
         rep = c1.selectbox("Assigned rep", reps, index=reps.index(a["assigned_rep"]) if a["assigned_rep"] in reps else None,
-                           placeholder="Pick a rep…")
+                           placeholder="Unassigned")
         out = c2.selectbox("Show / no-show", stt, index=stt.index(a["status"]) if a["status"] in stt else 0,
                            format_func=lambda s: APPT_STATUS[s])
         notes = st.text_area("Notes", value=a["notes"] or "", placeholder="Anything management should know…", height=80)
@@ -4241,13 +4243,13 @@ def page_appointments():
         {"label": "📞 Called on time", "value": f"{called:,}" + (f"<span class='dl'>{called / len(done):.0%}</span>" if len(done) else ""),
          "note": f"of {len(done):,} past appointments · {len(done) - called:,} not called"},
         {"label": "Showed", "value": f"{showed:,}", "note": f"{marked:,} marked show / no-show so far"},
-        {"label": "⚑ Needs a rep", "value": f"{len(unassigned):,}", "note": "assign them below" if len(unassigned) else "all assigned",
+        {"label": "⚑ Unassigned", "value": f"{len(unassigned):,}", "note": "assign them below" if len(unassigned) else "every appointment has a rep",
          "alert": len(unassigned) > 0},
     ])
 
     reps = _rep_options()
     if not unassigned.empty:
-        st.markdown('<div class="card-h">Needs a rep<span>suggested = owner of the MMS lead</span></div>',
+        st.markdown('<div class="card-h">Unassigned<span>pick a rep, then Assign · suggested = owner of the MMS lead</span></div>',
                     unsafe_allow_html=True)
         per = 3
         items = list(unassigned.iterrows())
@@ -4276,7 +4278,7 @@ def page_appointments():
         table = pd.DataFrame({
             "When": appts["start"], "Company": appts["company"].fillna(""), "Contact": appts["invitee_name"].fillna(""),
             "Number": appts["invitee_phone"].map(lambda v: fmt_phone(v) if v else ""),
-            "Rep": appts["assigned_rep"].fillna("— needs a rep"), "Lead ID": appts["lead_id"].fillna(""),
+            "Rep": appts["assigned_rep"].fillna("Unassigned"), "Lead ID": appts["lead_id"].fillna(""),
             "Call": appts.apply(lambda a: {"called": f"Called {a['call_len']}", "not_called": "Not called",
                                            "upcoming": "Upcoming", "canceled": "—"}[a["call_status"]], axis=1),
             "Show / no-show": appts["status"].map(lambda s: APPT_STATUS.get(s, s)),
@@ -4289,7 +4291,7 @@ def page_appointments():
                 css.at[i, "Call"] = ("background-color:#E3F6EA;color:#137A43;font-weight:600" if v.startswith("Called") else
                                      "background-color:#FDECEA;color:#C0392B;font-weight:600" if v == "Not called" else "")
             for i, v in frame["Rep"].items():
-                if v.startswith("—"):
+                if v == "Unassigned":
                     css.at[i, "Rep"] = "background-color:#FFF4E0;color:#9a5b00;font-weight:600"
             return css
         ev = st.dataframe(table.style.apply(_css, axis=None), hide_index=True, width="stretch",
