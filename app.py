@@ -4239,39 +4239,117 @@ def _mms_ca_bundle(host: str, port: int = 443) -> str:
     if cert.issuer == cert.subject:
         raise MMSError(f"MMS uses a self-signed security certificate, which outside apps can't trust. IT would "
                        f"need to install a standard certificate (for example a free Let's Encrypt one) on {host}.")
-    extra = []
-    for _ in range(3):                                   # walk up the chain until a trusted root
+    def load_any(url: str):
+        """CA 'issuer' files come as DER, PEM, or a PKCS#7 bundle (.p7c / .p7b) - accept all of them."""
+        from cryptography.hazmat.primitives.serialization import pkcs7
+        resp = _rq.get(url, timeout=20)
+        raw = resp.content
+        for fn in (lambda r: [x509.load_der_x509_certificate(r)], x509.load_pem_x509_certificates,
+                   pkcs7.load_der_pkcs7_certificates, pkcs7.load_pem_pkcs7_certificates):
+            try:
+                certs = fn(raw)
+                if certs:
+                    return certs
+            except Exception:
+                pass
+        head = raw[:24]
+        raise MMSError(f"MMS's security certificate is missing its middle link. The app tried to fetch it from "
+                       f"{url} but got something it couldn't read (HTTP {resp.status_code}, "
+                       f"{resp.headers.get('Content-Type', 'no type')}, starts with {head!r}). "
+                       f"IT should install the full certificate chain on {host}.")
+
+    def cn(c) -> str:
+        v = c.issuer.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)
+        return v[0].value if v else c.issuer.rfc4514_string()
+
+    extra, last_err = [], None
+    for _ in range(4):                                   # walk up the chain until a trusted root
         try:
             aia = cert.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_INFORMATION_ACCESS).value
         except x509.ExtensionNotFound:
             break
         urls = [d.access_location.value for d in aia if d.access_method == AuthorityInformationAccessOID.CA_ISSUERS]
-        if not urls:
+        urls = [u for u in urls if u.lower().startswith("http")]
+        got = None
+        for u in urls:
+            try:
+                got = load_any(u)
+                break
+            except MMSError as e:
+                last_err = e
+            except Exception as e:
+                last_err = MMSError(f"Couldn't download the certificate's middle link from {u} ({type(e).__name__}).")
+        if not got:
             break
-        raw = _rq.get(urls[0], timeout=20).content
-        try:
-            cert = x509.load_der_x509_certificate(raw)
-        except ValueError:
-            cert = x509.load_pem_x509_certificate(raw)
-        extra.append(cert.public_bytes(Encoding.PEM).decode())
+        parent = next((c for c in got if c.subject == cert.issuer), got[0])
+        for c in got:
+            pem = c.public_bytes(Encoding.PEM).decode()
+            if pem not in extra:
+                extra.append(pem)
+        cert = parent
         if cert.issuer == cert.subject:
             break
+    if not extra and last_err:
+        raise last_err
     if not extra:
-        raise MMSError(f"MMS's security certificate couldn't be verified and doesn't say where its issuer can "
-                       f"be found. IT should install the full certificate chain on {host}.")
+        raise MMSError(f"MMS's security certificate (issued by {cn(cert)}) is missing its middle link and "
+                       f"doesn't say where to find it. IT should install the full certificate chain on {host}.")
     f = _tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False)
     f.write(open(certifi.where()).read() + "\n" + "\n".join(extra))
     f.close()
     return f.name
 
 
+MMS_LOGOFF_HOUR = 18          # the shared MMS login is dropped at 6:00 PM Central
+
+
+@st.cache_resource(show_spinner=False)
+def _mms_holder() -> dict:
+    """One MMS login shared by everyone using the app (not one per browser tab)."""
+    import threading
+    return {"s": None, "until": None, "lock": threading.Lock(), "logins": 0, "timer": None}
+
+
+def _mms_logoff(h: dict):
+    s = h.get("s")
+    h["s"], h["until"] = None, None
+    if s is not None:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def _mms_session() -> _rq.Session:
+    """The day's MMS connection: opened on the first Find in MMS click, reused for every search,
+    dropped at 6 PM Central (a click after 6 PM opens a short 30-minute one)."""
+    import threading
+    h = _mms_holder()
+    now = pd.Timestamp.now(tz=CENTRAL)
+    if h["s"] is not None and now < h["until"]:
+        return h["s"]
+    _mms_logoff(h)
+    s = _rq.Session()
+    s.headers["User-Agent"] = "Mozilla/5.0 (Primedia Call Report)"
+    six = now.normalize() + pd.Timedelta(hours=MMS_LOGOFF_HOUR)
+    h["s"], h["until"] = s, (six if now < six else now + pd.Timedelta(minutes=30))
+    if h.get("timer"):
+        h["timer"].cancel()
+    t = threading.Timer(max(1.0, (h["until"] - now).total_seconds()), _mms_logoff, args=(h,))
+    t.daemon = True
+    t.start()
+    h["timer"] = t
+    return s
+
+
 def _mms_get(params: list) -> str:
-    """Open the report page, logging in first if MMS asks. Keeps the login for this browser session."""
-    s = st.session_state.get("_mms_sess")
-    if s is None:
-        s = _rq.Session()
-        s.headers["User-Agent"] = "Mozilla/5.0 (Primedia Call Report)"
-        st.session_state["_mms_sess"] = s
+    """Open the report page with the day's shared MMS connection, logging in only if MMS asks."""
+    h = _mms_holder()
+    with h["lock"]:                     # one search at a time, so two clicks never cause two logins
+        return _mms_get_locked(_mms_session(), h, params)
+
+
+def _mms_get_locked(s: _rq.Session, h: dict, params: list) -> str:
     url = _mms_url()
     try:
         try:
@@ -4284,7 +4362,7 @@ def _mms_get(params: list) -> str:
                 raise
             except Exception as e2:
                 raise MMSError(f"MMS's security certificate couldn't be verified ({_ssl_reason(e)}), and the app "
-                               f"couldn't repair it automatically ({type(e2).__name__}). IT should check the "
+                               f"couldn't repair it automatically ({type(e2).__name__}: {str(e2)[:120]}). IT should check the "
                                f"certificate on {host}.")
             try:
                 r = s.get(url, params=params, timeout=25, verify=s.verify)
@@ -4294,9 +4372,10 @@ def _mms_get(params: list) -> str:
                                f"IT should check the certificate on {host}.")
         if _login_form(r.text) is not None:
             _mms_login(s, r)
+            h["logins"] += 1
             r = s.get(url, params=params, timeout=25, verify=s.verify)
             if _login_form(r.text) is not None:
-                st.session_state.pop("_mms_sess", None)
+                _mms_logoff(h)
                 raise MMSError("MMS didn't accept the login. Check MMS_USER and MMS_PASSWORD in the app's Secrets.")
     except _rq.exceptions.SSLError as e:
         raise MMSError(f"MMS's security certificate couldn't be verified ({_ssl_reason(e)}).")
