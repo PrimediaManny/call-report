@@ -245,13 +245,13 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .cal { background: #fff; border: 1px solid var(--pm-line); border-radius: 18px; display: grid; overflow: hidden;
        box-shadow: 0 8px 24px rgba(30,79,216,.06); margin-bottom: .8rem; }
 .cal-gut { position: relative; border-right: 1px solid var(--pm-line); margin-top: 58px; }
-.cal-hr { position: absolute; left: 0; right: 0; } .cal-hr span { position: absolute; right: 8px; top: -7px; font-size: .68rem; color: #9CA3AF; font-weight: 500; }
+.cal-hr { position: absolute; left: 0; right: 0; } .cal-hr span { position: absolute; right: 8px; top: -2px; font-size: .8rem; color: var(--pm-ink); font-weight: 800; white-space: nowrap; }
 .cal-col { border-right: 1px solid #EEF1F7; min-width: 0; } .cal-col:last-child { border-right: none; }
 .cal-dh { height: 58px; border-bottom: 1px solid var(--pm-line); padding: 10px 12px; display: flex; align-items: baseline; gap: 7px; background: #FAFBFE; }
 .cal-dh b { font-size: .9rem; } .cal-dh span { font-size: 1.25rem; font-weight: 700; color: var(--pm-navy); white-space: nowrap; }
 .cal-dh em { margin-left: auto; font-style: normal; font-size: .7rem; color: var(--pm-mute); background: var(--pm-light); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
 .cal-col.today .cal-dh { background: var(--pm-light); } .cal-col.today .cal-dh span { color: var(--pm-blue); }
-.cal-body { position: relative; background: repeating-linear-gradient(#fff 0, #fff 51px, #F5F7FB 51px, #F5F7FB 52px, #fff 52px, #fff 103px, #E9EDF5 103px, #E9EDF5 104px); }
+.cal-body { position: relative; background: repeating-linear-gradient(#fff 0, #fff 51px, #F5F7FB 51px, #F5F7FB 52px, #fff 52px, #fff 103px, #C9D3E6 103px, #C9D3E6 104px); }
 .cal-ev { position: absolute; height: 49px; background: var(--bg); border-left: 4px solid var(--c); border-radius: 9px;
           padding: 6px 9px; box-shadow: 0 2px 6px rgba(11,31,77,.08); overflow: hidden; }
 .cal-ev.unas { border: 1.5px dashed #E8A33C; border-left: 4px solid #E8A33C; background: #FFF7EA; }
@@ -4059,8 +4059,11 @@ def _g_search():
     st.session_state["g_search"] = ""
 
 
-def top_bar(dates: bool = True, team: bool = False, search: bool = True):
+def top_bar(dates: bool = True, team: bool = False, search: bool = True, future: bool = False):
     _g_init()
+    presets = G_PRESETS if future else [p for p in G_PRESETS if p != "Tomorrow"]   # Tomorrow: Appointments only
+    if st.session_state.get("g_preset") not in presets + [None]:
+        st.session_state["g_preset"] = "Yesterday"
     if team:
         teams = load_rep_teams()
         team_opts = [EVERYONE] + sorted(teams)
@@ -4068,7 +4071,7 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True):
             st.session_state["g_team"] = "Sales Team" if "Sales Team" in teams else EVERYONE
     tight = search and team and dates          # Call Report / Call Log: search shrinks to an icon-sized box
     spec = ([("search", .62 if tight else 1.05)] if search else []) + ([("team", 1.6)] if team else []) + \
-        ([("preset", 5.45), ("refresh", 1.35), ("prev", .3), ("week", 1.25), ("next", .3)] if dates else [])
+        ([("preset", 5.45 if future else 4.6), ("refresh", 1.35), ("prev", .3), ("week", 1.25), ("next", .3)] if dates else [])
     if not spec:
         return
     if not dates:
@@ -4084,7 +4087,7 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True):
                 c.selectbox("Team", team_opts, key="g_team", label_visibility="collapsed",
                             help="Team")
             elif name == "preset":
-                c.segmented_control("Dates", G_PRESETS, key="g_preset", on_change=_g_preset_changed,
+                c.segmented_control("Dates", presets, key="g_preset", on_change=_g_preset_changed,
                                     label_visibility="collapsed")
             elif name == "refresh":
                 c.button("Refresh", key="g_refresh", type="primary", icon=":material/refresh:", width="stretch",
@@ -4268,8 +4271,11 @@ def calendar_html(appts: pd.DataFrame, week_start: date, rep_colors: dict) -> st
     days = [week_start + timedelta(days=i) for i in range(7)]
     wk = appts[(appts["start"].dt.date >= days[0]) & (appts["start"].dt.date <= days[-1])]
     show = days[:5] + [d for d in days[5:] if (wk["start"].dt.date == d).any()]   # weekends only when booked
-    h0 = min([8] + [int(t.hour) for t in wk["start"]])
-    h1 = max([18] + [int(t.hour) + 1 for t in wk["start"]])
+    if len(wk):   # start at the hour of the first appointment, end after the last one (no dead space)
+        h0 = min(int(t.hour) for t in wk["start"])
+        h1 = max(int(t.hour) + 1 for t in wk["start"])
+    else:
+        h0, h1 = 8, 12
     height = (h1 - h0) * CAL_PX
     today = pd.Timestamp.now(tz=CENTRAL).date()
     hours = "".join(f'<div class="cal-hr" style="top:{(h - h0) * CAL_PX}px"><span>{(h % 12) or 12} {"AM" if h < 12 else "PM"}</span></div>'
@@ -4542,7 +4548,7 @@ nav = st.navigation({
         st.Page(with_bar(page_call_report, team=True), title="Call Report", icon=":material/call:", url_path="call-report",
                 default=True),
         PAGE_CALL_LOG,
-        st.Page(with_bar(page_appointments), title=f"Appointments ({_appt_n})" if _appt_n else "Appointments",
+        st.Page(with_bar(page_appointments, future=True), title=f"Appointments ({_appt_n})" if _appt_n else "Appointments",
                 icon=":material/event:", url_path="appointments"),
         st.Page(with_bar(page_commissions), title="Commissions", icon=":material/payments:", url_path="commissions"),
         st.Page(with_bar(page_att_calls), title="ATT Calls", icon=":material/phone_in_talk:", url_path="att-calls"),
