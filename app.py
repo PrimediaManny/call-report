@@ -4137,7 +4137,9 @@ def with_bar(fn, **kw):
 # =====================================================================================
 import requests as _rq
 from bs4 import BeautifulSoup as _BS
-from urllib.parse import urljoin as _urljoin
+from urllib.parse import urljoin as _urljoin, urlparse as _urlparse
+import ssl as _ssl
+import tempfile as _tempfile
 
 MMS_REPORT = "https://mms.primedianetwork.com/marketing/lead_developer_report.php"
 MMS_COLS = ["lead_id", "created", "last_edited", "lead_source", "media_market", "name_company_ad", "person_phone",
@@ -4204,8 +4206,63 @@ def _mms_login(s: _rq.Session, page: _rq.Response) -> _rq.Response:
         data[btn["name"]] = btn.get("value", "")
     action = _urljoin(page.url, form.get("action") or page.url) if getattr(form, "name", "") == "form" else page.url
     method = (form.get("method") or "post").lower() if getattr(form, "name", "") == "form" else "post"
-    r = s.get(action, params=data, timeout=25) if method == "get" else s.post(action, data=data, timeout=25)
+    r = s.get(action, params=data, timeout=25, verify=s.verify) if method == "get" else s.post(action, data=data, timeout=25, verify=s.verify)
     return r
+
+
+def _ssl_reason(e: Exception) -> str:
+    t = str(e)
+    for k in ("unable to get local issuer certificate", "certificate has expired", "self-signed certificate",
+              "self signed certificate", "Hostname mismatch", "doesn't match", "unable to verify the first certificate",
+              "wrong version number", "handshake failure", "unsupported protocol"):
+        if k.lower() in t.lower():
+            return k
+    return t[-160:]
+
+
+@st.cache_resource(show_spinner=False)
+def _mms_ca_bundle(host: str, port: int = 443) -> str:
+    """MMS's server doesn't send its full certificate chain (browsers fill the gap, Python doesn't).
+    Fetch the missing intermediate certificate(s) named in the site's own certificate and add them to the
+    normal trusted list, so the connection is still fully verified."""
+    import certifi
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
+    import datetime as _dt
+    cert = x509.load_pem_x509_certificate(_ssl.get_server_certificate((host, port)).encode())
+    now = _dt.datetime.now(_dt.timezone.utc)
+    end = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(tzinfo=_dt.timezone.utc)
+    if end < now:
+        raise MMSError(f"MMS's security certificate expired on {end:%m/%d/%Y}. IT needs to renew it on "
+                       f"{host} before the app can connect.")
+    if cert.issuer == cert.subject:
+        raise MMSError(f"MMS uses a self-signed security certificate, which outside apps can't trust. IT would "
+                       f"need to install a standard certificate (for example a free Let's Encrypt one) on {host}.")
+    extra = []
+    for _ in range(3):                                   # walk up the chain until a trusted root
+        try:
+            aia = cert.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_INFORMATION_ACCESS).value
+        except x509.ExtensionNotFound:
+            break
+        urls = [d.access_location.value for d in aia if d.access_method == AuthorityInformationAccessOID.CA_ISSUERS]
+        if not urls:
+            break
+        raw = _rq.get(urls[0], timeout=20).content
+        try:
+            cert = x509.load_der_x509_certificate(raw)
+        except ValueError:
+            cert = x509.load_pem_x509_certificate(raw)
+        extra.append(cert.public_bytes(Encoding.PEM).decode())
+        if cert.issuer == cert.subject:
+            break
+    if not extra:
+        raise MMSError(f"MMS's security certificate couldn't be verified and doesn't say where its issuer can "
+                       f"be found. IT should install the full certificate chain on {host}.")
+    f = _tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False)
+    f.write(open(certifi.where()).read() + "\n" + "\n".join(extra))
+    f.close()
+    return f.name
 
 
 def _mms_get(params: list) -> str:
@@ -4217,16 +4274,37 @@ def _mms_get(params: list) -> str:
         st.session_state["_mms_sess"] = s
     url = _mms_url()
     try:
-        r = s.get(url, params=params, timeout=25)
+        try:
+            r = s.get(url, params=params, timeout=25, verify=s.verify)
+        except _rq.exceptions.SSLError as e:
+            host = _urlparse(url).hostname
+            try:
+                s.verify = _mms_ca_bundle(host, _urlparse(url).port or 443)
+            except MMSError:
+                raise
+            except Exception as e2:
+                raise MMSError(f"MMS's security certificate couldn't be verified ({_ssl_reason(e)}), and the app "
+                               f"couldn't repair it automatically ({type(e2).__name__}). IT should check the "
+                               f"certificate on {host}.")
+            try:
+                r = s.get(url, params=params, timeout=25, verify=s.verify)
+            except _rq.exceptions.SSLError as e3:
+                _mms_ca_bundle.clear()
+                raise MMSError(f"MMS's security certificate still couldn't be verified ({_ssl_reason(e3)}). "
+                               f"IT should check the certificate on {host}.")
         if _login_form(r.text) is not None:
             _mms_login(s, r)
-            r = s.get(url, params=params, timeout=25)
+            r = s.get(url, params=params, timeout=25, verify=s.verify)
             if _login_form(r.text) is not None:
                 st.session_state.pop("_mms_sess", None)
                 raise MMSError("MMS didn't accept the login. Check MMS_USER and MMS_PASSWORD in the app's Secrets.")
-    except _rq.RequestException as e:
+    except _rq.exceptions.SSLError as e:
+        raise MMSError(f"MMS's security certificate couldn't be verified ({_ssl_reason(e)}).")
+    except _rq.exceptions.ConnectionError as e:
         raise MMSError(f"Couldn't reach MMS from the app's server ({type(e).__name__}). MMS may only allow "
                        "connections from the office network.")
+    except _rq.RequestException as e:
+        raise MMSError(f"The request to MMS failed ({type(e).__name__}: {str(e)[-140:]}).")
     if r.status_code >= 400:
         raise MMSError(f"MMS answered with an error (HTTP {r.status_code}).")
     return r.text
