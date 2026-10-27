@@ -4179,6 +4179,41 @@ def _login_form(html: str):
     return pw.find_parent("form") or soup
 
 
+def _auto_form(html: str):
+    """MMS answers a logged-out request with a blank page that auto-submits a form to /login
+    (<form ...><script>document.form.submit();</script>). Browsers run that script; the app does it here."""
+    soup = _BS(html, "html.parser")
+    if soup.find("input", {"type": "password"}):
+        return None
+    if soup.find("table") is not None:          # a real page (like the lead report) is never a jump page
+        return None
+    js = " ".join(t.get_text() for t in soup.find_all("script"))
+    for form in soup.find_all("form"):
+        inputs = form.find_all(["input", "select", "textarea"])
+        only_hidden = all(i.name == "input" and (i.get("type") or "").lower() == "hidden" for i in inputs)
+        if only_hidden and ".submit()" in js:
+            return form
+    return None
+
+
+def _submit_form(s: _rq.Session, page: _rq.Response, form) -> _rq.Response:
+    data = {i.get("name"): i.get("value", "") for i in form.find_all("input")
+            if i.get("name") and (i.get("type") or "text").lower() not in ("button", "image", "reset", "file", "checkbox", "radio")}
+    action = _urljoin(page.url, form.get("action") or page.url)
+    if (form.get("method") or "get").lower() == "post":
+        return s.post(action, data=data, timeout=25, verify=s.verify)
+    return s.get(action, params=data, timeout=25, verify=s.verify)
+
+
+def _follow_jumps(s: _rq.Session, r: _rq.Response) -> _rq.Response:
+    for _ in range(4):
+        form = _auto_form(r.text)
+        if form is None:
+            break
+        r = _submit_form(s, r, form)
+    return r
+
+
 def _mms_login(s: _rq.Session, page: _rq.Response) -> _rq.Response:
     try:
         user, pwd = st.secrets.get("MMS_USER"), st.secrets.get("MMS_PASSWORD")
@@ -4370,10 +4405,11 @@ def _mms_get_locked(s: _rq.Session, h: dict, params: list) -> str:
                 _mms_ca_bundle.clear()
                 raise MMSError(f"MMS's security certificate still couldn't be verified ({_ssl_reason(e3)}). "
                                f"IT should check the certificate on {host}.")
+        r = _follow_jumps(s, r)                  # logged out: MMS's blank page jumps to /login
         if _login_form(r.text) is not None:
-            _mms_login(s, r)
+            _follow_jumps(s, _mms_login(s, r))
             h["logins"] += 1
-            r = s.get(url, params=params, timeout=25, verify=s.verify)
+            r = _follow_jumps(s, s.get(url, params=params, timeout=25, verify=s.verify))
             if _login_form(r.text) is not None:
                 _mms_logoff(h)
                 raise MMSError("MMS didn't accept the login. Check MMS_USER and MMS_PASSWORD in the app's Secrets.")
@@ -4419,7 +4455,8 @@ def parse_mms_report(html: str) -> list:
                         out.append(rec)
                 return out
     title = soup.title.get_text(strip=True) if soup.title else "no title"
-    raise MMSError(f"MMS opened, but the lead table wasn't on the page (page: {title}).")
+    text = " ".join(soup.get_text(" ", strip=True).split())[:160]
+    raise MMSError(f"MMS opened, but the lead table wasn't on the page (page: {title} · it said: \"{text}\").")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
