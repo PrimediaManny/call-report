@@ -83,6 +83,14 @@ h1 { font-weight: 700 !important; letter-spacing: -.02em; color: var(--pm-ink); 
          padding: 10px 12px; margin-bottom: 8px; }
 .fresh .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #34D399; margin-right: 6px; }
 .fresh b { color: #fff; }
+.st-key-sb_refresh { margin-bottom: 2px; }
+[data-testid="stSidebar"] .st-key-sb_refresh button { background: rgba(255,255,255,.04) !important; border: 1px solid rgba(255,255,255,.12) !important;
+  border-radius: 10px !important; box-shadow: none !important; justify-content: flex-start !important; padding: .45rem 1rem !important;
+  min-height: 2.5rem !important; color: rgb(214,223,245) !important; }
+.st-key-sb_refresh button > div, .st-key-sb_refresh button [data-testid="stMarkdownContainer"] {
+  justify-content: flex-start !important; width: 100%; gap: .6rem; }
+[data-testid="stSidebar"] .st-key-sb_refresh button:hover { background: rgba(255,255,255,.09) !important; border-color: rgba(255,255,255,.25) !important; }
+[data-testid="stSidebar"] .st-key-sb_refresh button p { font-size: 14px !important; color: rgb(214,223,245) !important; text-align: left; }
 
 /* ---- glass: primary buttons, selected chips / segments / pills ---- */
 [data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"],
@@ -4071,7 +4079,7 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True, future:
             st.session_state["g_team"] = "Sales Team" if "Sales Team" in teams else EVERYONE
     tight = search and team and dates          # Call Report / Call Log: search shrinks to an icon-sized box
     spec = ([("search", .62 if tight else 1.05)] if search else []) + ([("team", 1.6)] if team else []) + \
-        ([("preset", 5.45 if future else 4.6), ("refresh", 1.35), ("prev", .3), ("week", 1.25), ("next", .3)] if dates else [])
+        ([("preset", 5.45 if future else 4.6), ("gap", 1.1), ("prev", .3), ("week", 1.5), ("next", .3)] if dates else [])
     if not spec:
         return
     if not dates:
@@ -4089,9 +4097,6 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True, future:
             elif name == "preset":
                 c.segmented_control("Dates", presets, key="g_preset", on_change=_g_preset_changed,
                                     label_visibility="collapsed")
-            elif name == "refresh":
-                c.button("Refresh", key="g_refresh", type="primary", icon=":material/refresh:", width="stretch",
-                         on_click=_g_refresh, help="Fetch the latest appointments, calls and leads from the database")
             elif name == "prev":
                 c.button("‹", key="g_prev", on_click=_g_step, args=(-1,), help="Previous broadcast week",
                          width="stretch")
@@ -4571,6 +4576,8 @@ nav = st.navigation({
 
 # Sidebar footer (all pages): how fresh the data is + rarely needed tools
 with st.sidebar:
+    st.button("Refresh", key="sb_refresh", icon=":material/refresh:", width="stretch", on_click=_g_refresh,
+              help="Fetch the latest appointments, calls and leads from the database")
     try:
         fr = load_freshness()
         last_call = pd.to_datetime(fr.get("last_call")) if fr.get("last_call") else None
