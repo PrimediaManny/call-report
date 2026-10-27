@@ -4206,21 +4206,35 @@ def appt_drawer(a, calls: pd.DataFrame):
         st.caption("This booking isn't matched to an MMS lead yet.")
 
 
-def page_appointments():
+def appt_range() -> tuple:
+    """Like the top bar's range, but appointments are booked ahead: a week runs through Sunday and
+    This month runs to the end of the month (calls stop at today, appointments don't)."""
     start, end = g_range()
+    p = st.session_state.get("g_preset")
+    if g_is_week():
+        end = start + timedelta(days=6)
+    elif p == "This month":
+        end = (start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return start, end
+
+
+def page_appointments():
+    start, end = appt_range()
     toast = st.session_state.pop("ap_toast", None)
     if toast:
         st.toast(toast, icon=":material/check_circle:")
     h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
     with h1:
         st.title("Appointments")
-        st.caption(f"Calendly bookings for **{esc(g_when())}**, assigned to a rep and checked against the call log. "
+        when = (f"Week {bweek_number(start)} · " if g_is_week() else "") + \
+            (f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}")
+        st.caption(f"Calendly bookings for **{esc(when)}**, assigned to a rep and checked against the call log. "
                    "New bookings arrive on their own.")
     view_mode = h2.segmented_control("View", ["By rep", "List"], default="By rep", key="ap_view",
                                      label_visibility="collapsed") or "By rep"
     appts = load_appointments(start, end)
     if appts.empty:
-        st.info(f"No appointments for {g_when()}.")
+        st.info(f"No appointments for {when}.")
         return
     calls = load_calls(start, end)
     if not calls.empty:
