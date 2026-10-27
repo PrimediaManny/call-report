@@ -182,10 +182,12 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
   margin: -.6rem 0 .9rem 0; }
 .st-key-pm_topbar [data-testid="stTextInputRootElement"], .st-key-pm_topbar [data-baseweb="select"] > div {
   background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(238,243,255,.75)); border-color: #fff; border-radius: 10px; }
+.st-key-g_refresh button p { white-space: nowrap; }
+.st-key-g_refresh button { padding: .3rem .55rem !important; gap: .3rem; }
 .st-key-g_prev button, .st-key-g_next button { font-size: 1.15rem; font-weight: 700; color: var(--pm-blue) !important; padding: 0 !important; }
 .st-key-pm_topbar [data-testid="stButtonGroup"] { flex-wrap: nowrap; }
-.st-key-pm_topbar [data-testid="stButtonGroup"] button { padding: .3rem .62rem !important; min-height: 2.35rem; }
-.st-key-pm_topbar [data-testid="stButtonGroup"] button p { font-size: .84rem !important; white-space: nowrap; }
+.st-key-pm_topbar [data-testid="stButtonGroup"] button { padding: .3rem .42rem !important; min-height: 2.35rem; }
+.st-key-pm_topbar [data-testid="stButtonGroup"] button p { font-size: .8rem !important; white-space: nowrap; }
 /* week-over-week change */
 .dl { display: inline-block; font-size: .72rem; font-weight: 700; border-radius: 6px; padding: 2px 7px; margin-left: 10px;
       vertical-align: middle; letter-spacing: 0; line-height: 1.5; background: #F1F1F3; color: #5F6168; }
@@ -236,6 +238,32 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .nr-kv div { display: flex; flex-direction: column; }
 .nr-kv span { font-size: .7rem; color: var(--pm-mute); }
 .nr-kv b { font-size: .84rem; font-weight: 600; color: var(--pm-ink); }
+/* ---- Appointments calendar ---- */
+.cal-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: .8rem; color: #374151; margin: .2rem 0 .6rem 2px; }
+.cal-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.cal-legend .sp { flex: 1; } .cal-legend span:last-child { color: var(--pm-mute); }
+.cal { background: #fff; border: 1px solid var(--pm-line); border-radius: 18px; display: grid; overflow: hidden;
+       box-shadow: 0 8px 24px rgba(30,79,216,.06); margin-bottom: .8rem; }
+.cal-gut { position: relative; border-right: 1px solid var(--pm-line); margin-top: 58px; }
+.cal-hr { position: absolute; left: 0; right: 0; } .cal-hr span { position: absolute; right: 8px; top: -7px; font-size: .68rem; color: #9CA3AF; font-weight: 500; }
+.cal-col { border-right: 1px solid #EEF1F7; min-width: 0; } .cal-col:last-child { border-right: none; }
+.cal-dh { height: 58px; border-bottom: 1px solid var(--pm-line); padding: 10px 12px; display: flex; align-items: baseline; gap: 7px; background: #FAFBFE; }
+.cal-dh b { font-size: .9rem; } .cal-dh span { font-size: 1.25rem; font-weight: 700; color: var(--pm-navy); white-space: nowrap; }
+.cal-dh em { margin-left: auto; font-style: normal; font-size: .7rem; color: var(--pm-mute); background: var(--pm-light); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.cal-col.today .cal-dh { background: var(--pm-light); } .cal-col.today .cal-dh span { color: var(--pm-blue); }
+.cal-body { position: relative; background: repeating-linear-gradient(#fff 0, #fff 51px, #F5F7FB 51px, #F5F7FB 52px, #fff 52px, #fff 103px, #E9EDF5 103px, #E9EDF5 104px); }
+.cal-ev { position: absolute; height: 49px; background: var(--bg); border-left: 4px solid var(--c); border-radius: 9px;
+          padding: 6px 9px; box-shadow: 0 2px 6px rgba(11,31,77,.08); overflow: hidden; }
+.cal-ev.unas { border: 1.5px dashed #E8A33C; border-left: 4px solid #E8A33C; background: #FFF7EA; }
+.cal-ev.cxl { opacity: .55; }
+.cal-t { display: flex; justify-content: space-between; align-items: center; gap: 4px; font-size: .72rem; }
+.cal-t b { color: var(--c); white-space: nowrap; }
+.cal-r { display: flex; justify-content: space-between; gap: 6px; margin-top: 3px; align-items: baseline; }
+.cal-c { font-size: .8rem; font-weight: 700; color: var(--pm-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-w { font-size: .72rem; font-weight: 600; color: #4B5563; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-ok, .cal-no, .cal-up, .cal-un { font-size: .66rem; font-weight: 700; border-radius: 5px; padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-ok { background: #fff; color: #137A43; } .cal-no { background: #FDECEA; color: #C0392B; }
+.cal-up { background: #fff; color: var(--pm-mute); } .cal-un { background: #fff; color: #B45309; }
 /* Commissions */
 .kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .st-key-pm_email { background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(233,239,255,.9)); border-radius: 14px !important;
@@ -3930,7 +3958,7 @@ def page_assign_commissions():
 # =====================================================================================
 # SHARED TOP BAR: one search box, one team and one date range for every tab
 # =====================================================================================
-G_PRESETS = ["Yesterday", "This week", "Last week", "This month", "Custom"]
+G_PRESETS = ["Yesterday", "Tomorrow", "This week", "Last week", "This month", "Custom"]
 
 
 def _g_init():
@@ -3946,6 +3974,9 @@ def g_range() -> tuple:
     _g_init()
     ss, today = st.session_state, date.today()
     p = ss.get("g_preset")
+    if p == "Tomorrow":
+        t = today + timedelta(days=1)
+        return t, t
     if p == "This week":
         return bweek_monday(today), today
     if p == "Last week":
@@ -4010,6 +4041,16 @@ def g_team_reps():
     return None if team == EVERYONE else load_rep_teams().get(team, set())
 
 
+def _g_refresh():
+    """Re-read appointments / calls from the database (in case a new booking is lagging behind)."""
+    for fn in ("load_appointments", "load_calls", "load_freshness", "load_needs_review", "calls_to_lead_in_month",
+               "load_leads_with_calls"):
+        f = globals().get(fn)
+        if f is not None and hasattr(f, "clear"):
+            f.clear()
+    st.session_state["_g_refreshed"] = True
+
+
 def _g_search():
     q = (st.session_state.get("g_search") or "").strip()
     if q:
@@ -4025,8 +4066,9 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True):
         team_opts = [EVERYONE] + sorted(teams)
         if st.session_state.get("g_team") not in team_opts:
             st.session_state["g_team"] = "Sales Team" if "Sales Team" in teams else EVERYONE
-    spec = ([("search", 1.35)] if search else []) + ([("team", 1.5)] if team else []) + \
-        ([("preset", 4.85), ("prev", .3), ("week", 2.0), ("next", .3)] if dates else [])
+    tight = search and team and dates          # Call Report / Call Log: search shrinks to an icon-sized box
+    spec = ([("search", .62 if tight else 1.05)] if search else []) + ([("team", 1.6)] if team else []) + \
+        ([("preset", 5.45), ("refresh", 1.35), ("prev", .3), ("week", 1.25), ("next", .3)] if dates else [])
     if not spec:
         return
     if not dates:
@@ -4036,7 +4078,7 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True):
         for (name, _), c in zip(spec, cols):
             if name == "search":
                 c.text_input("Search", key="g_search", on_change=_g_search, label_visibility="collapsed",
-                             icon=":material/search:", placeholder="Search",
+                             icon=":material/search:", placeholder="" if tight else "Search",
                              help="Search MMS for a phone number, company, name or lead ID")
             elif name == "team":
                 c.selectbox("Team", team_opts, key="g_team", label_visibility="collapsed",
@@ -4044,12 +4086,15 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True):
             elif name == "preset":
                 c.segmented_control("Dates", G_PRESETS, key="g_preset", on_change=_g_preset_changed,
                                     label_visibility="collapsed")
+            elif name == "refresh":
+                c.button("Refresh", key="g_refresh", type="primary", icon=":material/refresh:", width="stretch",
+                         on_click=_g_refresh, help="Fetch the latest appointments, calls and leads from the database")
             elif name == "prev":
                 c.button("‹", key="g_prev", on_click=_g_step, args=(-1,), help="Previous broadcast week",
                          width="stretch")
             elif name == "week":
                 c.selectbox("Broadcast week", att_week_options(), key="g_week", index=None, format_func=_g_week_label,
-                            placeholder="Broadcast week", on_change=_g_week_changed,
+                            placeholder="Week", on_change=_g_week_changed,
                             label_visibility="collapsed")
             elif name == "next":
                 c.button("›", key="g_next", on_click=_g_step, args=(1,), help="Next broadcast week", width="stretch",
@@ -4058,6 +4103,8 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True):
             cc = st.columns([2.4, 7.6], vertical_alignment="center")
             cc[0].date_input("Custom dates", key="g_custom", format="MM/DD/YYYY", label_visibility="collapsed")
             cc[1].caption("Pick a start and an end date")
+    if st.session_state.pop("_g_refreshed", False):
+        st.toast("Refreshed — showing the latest from the database", icon=":material/refresh:")
     if st.session_state.pop("_go_search", False):
         st.switch_page(PAGE_LEAD_SEARCH)
 
@@ -4206,6 +4253,69 @@ def appt_drawer(a, calls: pd.DataFrame):
         st.caption("This booking isn't matched to an MMS lead yet.")
 
 
+CAL_COLORS = ["#1E4FD8", "#0E9F6E", "#C2410C", "#7C3AED", "#0891B2", "#BE185D", "#4D7C0F", "#B91C1C", "#0F766E", "#6D28D9"]
+CAL_PX = 104          # pixels per hour (each half hour fits one appointment)
+
+
+def _tint(hex_color: str, k: float = .88) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return "#%02x%02x%02x" % tuple(round(v + (255 - v) * k) for v in (r, g, b))
+
+
+def calendar_html(appts: pd.DataFrame, week_start: date, rep_colors: dict) -> str:
+    """One week as a calendar: days across, hours down, one colored card per appointment."""
+    days = [week_start + timedelta(days=i) for i in range(7)]
+    wk = appts[(appts["start"].dt.date >= days[0]) & (appts["start"].dt.date <= days[-1])]
+    show = days[:5] + [d for d in days[5:] if (wk["start"].dt.date == d).any()]   # weekends only when booked
+    h0 = min([8] + [int(t.hour) for t in wk["start"]])
+    h1 = max([18] + [int(t.hour) + 1 for t in wk["start"]])
+    height = (h1 - h0) * CAL_PX
+    today = pd.Timestamp.now(tz=CENTRAL).date()
+    hours = "".join(f'<div class="cal-hr" style="top:{(h - h0) * CAL_PX}px"><span>{(h % 12) or 12} {"AM" if h < 12 else "PM"}</span></div>'
+                    for h in range(h0, h1))
+    cols = []
+    for d in show:
+        mine = wk[wk["start"].dt.date == d].sort_values("start")
+        slot = (mine["start"].dt.hour * 2 + (mine["start"].dt.minute >= 30)).tolist()
+        cards = []
+        for j, (_, a) in enumerate(mine.iterrows()):
+            same = [i for i, x in enumerate(slot) if x == slot[j]]     # appointments sharing this half hour
+            n, k = len(same), same.index(j)                            # ... sit side by side
+            top = ((a["start"].hour - h0) * 60 + a["start"].minute) / 60 * CAL_PX
+            rep = a["assigned_rep"] or ""
+            c = rep_colors.get(rep, "#B45309") if rep else "#B45309"
+            cs, stt = a["call_status"], a["status"] or "scheduled"
+            badge = {"called": f'<span class="cal-ok">📞 {us_time(a["call_at"], False)} · {esc(a["call_len"])}</span>',
+                     "not_called": '<span class="cal-no">Not called</span>',
+                     "upcoming": '<span class="cal-up">Upcoming</span>' if rep else '<span class="cal-un">Needs a rep</span>',
+                     "canceled": '<span class="cal-up">Canceled</span>'}.get(cs, "")
+            if not rep and cs != "canceled":
+                badge = '<span class="cal-un">Needs a rep</span>'
+            who = rep.split()[0] if rep else ""
+            mark = {"showed": "✓", "sold": "★", "no_show": "✗", "rescheduled": "↻"}.get(stt, "")
+            if mark:
+                who = f"{who} {mark}".strip()
+            cls = "cal-ev" + (" unas" if not rep else "") + (" cxl" if stt == "canceled" else "")
+            left, width = f"calc({k} * (100% - 8px) / {n} + 4px)", f"calc((100% - 8px) / {n} - 4px)"
+            cards.append(f'<div class="{cls}" style="top:{top:.0f}px;left:{left};width:{width};--c:{c};--bg:{_tint(c)}">'
+                         f'<div class="cal-t"><b>{us_time(a["start"], False)}</b>{badge}</div>'
+                         f'<div class="cal-r"><span class="cal-c">{esc(a["company"] or a["invitee_name"] or "")}</span>'
+                         f'<span class="cal-w">{esc(who)}</span></div></div>')
+        cols.append(f'<div class="cal-col{" today" if d == today else ""}"><div class="cal-dh"><b>{d:%a}</b>'
+                    f'<span>{d:%b} {d.day}</span><em>{plural(len(mine), "appt")}</em></div>'
+                    f'<div class="cal-body" style="height:{height}px">{"".join(cards)}</div></div>')
+    return (f'<div class="cal" style="grid-template-columns:62px repeat({len(show)},1fr)">'
+            f'<div class="cal-gut" style="height:{height}px">{hours}</div>{"".join(cols)}</div>')
+
+
+def _ap_pick():
+    v = st.session_state.get("ap_pick")
+    if v:
+        st.session_state["ap_open"] = int(v)
+    st.session_state["ap_pick"] = None
+
+
 def appt_range() -> tuple:
     """Like the top bar's range, but appointments are booked ahead: a week runs through Sunday and
     This month runs to the end of the month (calls stop at today, appointments don't)."""
@@ -4230,8 +4340,8 @@ def page_appointments():
             (f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}")
         st.caption(f"Calendly bookings for **{esc(when)}**, assigned to a rep and checked against the call log. "
                    "New bookings arrive on their own.")
-    view_mode = h2.segmented_control("View", ["By rep", "List"], default="By rep", key="ap_view",
-                                     label_visibility="collapsed") or "By rep"
+    view_mode = h2.segmented_control("View", ["Calendar", "By rep", "List"], default="Calendar", key="ap_view",
+                                     label_visibility="collapsed") or "Calendar"
     appts = load_appointments(start, end)
     if appts.empty:
         st.info(f"No appointments for {when}.")
@@ -4288,6 +4398,37 @@ def page_appointments():
         st.write("")
 
     assigned = appts[~appts.index.isin(unassigned.index)]
+    if view_mode == "Calendar":
+        order = reps + sorted(set(appts["assigned_rep"].dropna()) - set(reps))
+        colors = {r: CAL_COLORS[i % len(CAL_COLORS)] for i, r in enumerate(order)}
+        present = [r for r in order if (appts["assigned_rep"] == r).any()]
+        legend = "".join(f'<span><i style="background:{colors[r]}"></i>{esc(r)}</span>' for r in present)
+        if not unassigned.empty:
+            legend += '<span><i style="background:#E8A33C"></i>Unassigned</span>'
+        opts = appts.sort_values("start")
+        labels = {int(a["id"]): f"{a['start']:%a %m/%d} {us_time(a['start'], False)} · {a['company'] or a['invitee_name']}"
+                                f" · {a['assigned_rep'] or 'Unassigned'}" for _, a in opts.iterrows()}
+        c1, c2 = st.columns([2.2, 3], vertical_alignment="center")
+        c1.selectbox("Open an appointment", list(labels), index=None, format_func=lambda i: labels[i],
+                     placeholder="🔎 Open an appointment…", key="ap_pick", on_change=_ap_pick,
+                     label_visibility="collapsed")
+        c2.markdown(f'<div class="cal-legend" style="margin:0">{legend}<span class="sp"></span>'
+                    f'<span>📞 rep called within 3 hrs · ✓ showed · ✗ no-show · ★ sold</span></div>',
+                    unsafe_allow_html=True)
+        w = bweek_monday(start)
+        while w <= end:
+            if len(appts[(appts["start"].dt.date >= w) & (appts["start"].dt.date <= w + timedelta(days=6))]) or g_is_week():
+                if not g_is_week():
+                    st.markdown(f'<div class="card-h" style="margin-top:.6rem">{_g_week_label(w)} · '
+                                f'{w:%b} {w.day} – {(w + timedelta(days=6)):%b} {(w + timedelta(days=6)).day}</div>',
+                                unsafe_allow_html=True)
+                st.markdown(calendar_html(appts, w, colors), unsafe_allow_html=True)
+            w += timedelta(days=7)
+        if st.session_state.get("ap_open"):
+            pick = appts[appts["id"] == st.session_state.pop("ap_open")]
+            if not pick.empty:
+                appt_drawer(pick.iloc[0], calls)
+        return
     if view_mode == "List":
         table = pd.DataFrame({
             "When": appts["start"], "Company": appts["company"].fillna(""), "Contact": appts["invitee_name"].fillna(""),
