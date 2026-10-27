@@ -83,6 +83,10 @@ h1 { font-weight: 700 !important; letter-spacing: -.02em; color: var(--pm-ink); 
          padding: 10px 12px; margin-bottom: 8px; }
 .fresh .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #34D399; margin-right: 6px; }
 .fresh b { color: #fff; }
+[class*="st-key-ap_find_"] button { min-height: 2rem !important; margin-top: -4px; border-style: dashed !important;
+  border-color: #F5C77A !important; color: #8a4b00 !important; background: #FFFBF2 !important; }
+[class*="st-key-ap_find_"] button p { font-size: .8rem !important; }
+[class*="st-key-mms_hit_"] { background: #FBFCFF; border-radius: 12px !important; }
 .st-key-sb_refresh { margin-bottom: 2px; }
 [data-testid="stSidebar"] .st-key-sb_refresh button { background: rgba(255,255,255,.04) !important; border: 1px solid rgba(255,255,255,.12) !important;
   border-radius: 10px !important; box-shadow: none !important; justify-content: flex-start !important; padding: .45rem 1rem !important;
@@ -4127,6 +4131,240 @@ def with_bar(fn, **kw):
 
 
 # =====================================================================================
+# FIND IN MMS: on request only, search the MMS lead report by company and by contact name
+# (used for bookings with no lead match in Supabase). The CSV upload stays the main sync.
+# Secrets needed: MMS_USER, MMS_PASSWORD   (optional: MMS_URL)
+# =====================================================================================
+import requests as _rq
+from bs4 import BeautifulSoup as _BS
+from urllib.parse import urljoin as _urljoin
+
+MMS_REPORT = "https://mms.primedianetwork.com/marketing/lead_developer_report.php"
+MMS_COLS = ["lead_id", "created", "last_edited", "lead_source", "media_market", "name_company_ad", "person_phone",
+            "person_email", "lead_rating", "partner_rep", "status"]
+# report header -> MMS table column in Supabase
+MMS_MAP = {"ID#": "Lead Id", "Created": "Lead Started", "Last Edited": "Last Edited", "Source": "Lead Source",
+           "Market": "Media Market", "Company": "Company In Ad", "Contact Phone": "Contact Phone (phase2)",
+           "Contact Email": "Contact Email (phase2)", "Rating": "Lead Rating", "Lead Owner": "Lead Owner",
+           "Status": "Status"}
+
+
+class MMSError(Exception):
+    pass
+
+
+def _mms_url() -> str:
+    try:
+        return st.secrets.get("MMS_URL") or MMS_REPORT
+    except Exception:
+        return MMS_REPORT
+
+
+def _mms_params(company: str = "", name: str = "") -> list:
+    p = [("filter_startdate_callback", ""), ("filter_enddate_callback", ""), ("filter_id", ""),
+         ("filter_startdate", ""), ("filter_enddate", ""), ("filter_modified_start", ""), ("filter_modified_end", ""),
+         ("filter_company", company), ("filter_phone", ""), ("filter_name", name), ("filter_url", ""),
+         ("bulk_select", ""), ("bulk_select_status", ""), ("startpage", ""), ("pageno", "1"), ("grpperpage", "25"),
+         ("sortcol", "last_edited"), ("sortdir", "DESC")]
+    return p + [("show_columns[]", c) for c in MMS_COLS]
+
+
+def _login_form(html: str):
+    soup = _BS(html, "html.parser")
+    pw = soup.find("input", {"type": "password"})
+    if not pw:
+        return None
+    return pw.find_parent("form") or soup
+
+
+def _mms_login(s: _rq.Session, page: _rq.Response) -> _rq.Response:
+    try:
+        user, pwd = st.secrets.get("MMS_USER"), st.secrets.get("MMS_PASSWORD")
+    except Exception:
+        user = pwd = None
+    if not user or not pwd:
+        raise MMSError("The MMS login isn't set up yet. Add MMS_USER and MMS_PASSWORD to the app's Secrets in Streamlit.")
+    form = _login_form(page.text)
+    data, user_set = {}, False
+    for inp in form.find_all("input"):
+        n, t = inp.get("name"), (inp.get("type") or "text").lower()
+        if not n:
+            continue
+        if t == "password":
+            data[n] = pwd
+        elif t in ("text", "email") and not user_set:
+            data[n], user_set = user, True
+        elif t in ("checkbox", "radio"):
+            if inp.has_attr("checked"):
+                data[n] = inp.get("value", "on")
+        elif t not in ("button", "image", "reset", "file"):
+            data[n] = inp.get("value", "")
+    btn = form.find(["button", "input"], {"type": "submit"})
+    if btn is not None and btn.get("name"):
+        data[btn["name"]] = btn.get("value", "")
+    action = _urljoin(page.url, form.get("action") or page.url) if getattr(form, "name", "") == "form" else page.url
+    method = (form.get("method") or "post").lower() if getattr(form, "name", "") == "form" else "post"
+    r = s.get(action, params=data, timeout=25) if method == "get" else s.post(action, data=data, timeout=25)
+    return r
+
+
+def _mms_get(params: list) -> str:
+    """Open the report page, logging in first if MMS asks. Keeps the login for this browser session."""
+    s = st.session_state.get("_mms_sess")
+    if s is None:
+        s = _rq.Session()
+        s.headers["User-Agent"] = "Mozilla/5.0 (Primedia Call Report)"
+        st.session_state["_mms_sess"] = s
+    url = _mms_url()
+    try:
+        r = s.get(url, params=params, timeout=25)
+        if _login_form(r.text) is not None:
+            _mms_login(s, r)
+            r = s.get(url, params=params, timeout=25)
+            if _login_form(r.text) is not None:
+                st.session_state.pop("_mms_sess", None)
+                raise MMSError("MMS didn't accept the login. Check MMS_USER and MMS_PASSWORD in the app's Secrets.")
+    except _rq.RequestException as e:
+        raise MMSError(f"Couldn't reach MMS from the app's server ({type(e).__name__}). MMS may only allow "
+                       "connections from the office network.")
+    if r.status_code >= 400:
+        raise MMSError(f"MMS answered with an error (HTTP {r.status_code}).")
+    return r.text
+
+
+def _cell_text(td) -> str:
+    t = td.get_text(" ", strip=True)
+    if not t:
+        for tag in td.find_all(["input", "button"]):
+            t = (tag.get("value") or tag.get_text(" ", strip=True) or "").strip()
+            if t:
+                break
+    return " ".join(t.split())
+
+
+def parse_mms_report(html: str) -> list:
+    soup = _BS(html, "html.parser")
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        for hi, tr in enumerate(rows[:6]):
+            heads = [_cell_text(c).rstrip(" ▼▲").strip() for c in tr.find_all(["th", "td"], recursive=False)]
+            heads = [h.lstrip("▼▲ ").strip() for h in heads]
+            if "ID#" in heads and "Company" in heads:
+                out = []
+                for r in rows[hi + 1:]:
+                    cells = r.find_all(["td", "th"], recursive=False)
+                    if len(cells) != len(heads):
+                        continue
+                    rec = {h: _cell_text(c) for h, c in zip(heads, cells) if h in MMS_MAP}
+                    lid = "".join(ch for ch in rec.get("ID#", "") if ch.isdigit())
+                    if lid:
+                        rec["ID#"] = lid
+                        out.append(rec)
+                return out
+    title = soup.title.get_text(strip=True) if soup.title else "no title"
+    raise MMSError(f"MMS opened, but the lead table wasn't on the page (page: {title}).")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def mms_search(company: str = "", name: str = "") -> list:
+    return parse_mms_report(_mms_get(_mms_params(company.strip(), name.strip())))
+
+
+def _mms_date(v: str, with_time: bool) -> str:
+    p = pd.to_datetime(v, errors="coerce", format="mixed")
+    if pd.isna(p):
+        return v or None
+    return p.strftime("%Y-%m-%d %H:%M:%S" if with_time else "%Y-%m-%d")
+
+
+def _owner_to_rep(owner: str) -> str:
+    try:
+        c = load_contacts()
+        hit = c[(c["rep"] == owner) | (c["mms_owner"] == owner)]
+        if not hit.empty:
+            return str(hit.sort_values("rep", key=lambda s: s != owner).iloc[0]["rep"])
+    except Exception:
+        pass
+    return owner
+
+
+def use_mms_lead(a, rec: dict):
+    """Save the MMS lead to Supabase and link it (and its owner) to the appointment."""
+    row = {MMS_MAP[k]: (v or None) for k, v in rec.items() if k in MMS_MAP}
+    row["Lead Started"] = _mms_date(rec.get("Created", ""), False)
+    row["Last Edited"] = _mms_date(rec.get("Last Edited", ""), True)
+    sb.table("mms").upsert([row], on_conflict="Lead Id").execute()
+    try:
+        sb.rpc("refresh_lead_phones", {"p_ids": [row["Lead Id"]]}).execute()
+    except Exception:
+        pass
+    owner = rec.get("Lead Owner") or ""
+    rep = _owner_to_rep(owner) if owner else None
+    now = pd.Timestamp.now("UTC").isoformat()
+    upd = {"lead_id": row["Lead Id"], "suggested_rep": rep, "updated_at": now}
+    if rep and not a["assigned_rep"] and rep in _rep_options():
+        upd.update({"assigned_rep": rep, "assigned_at": now})
+    if not a["invitee_phone"] and rec.get("Contact Phone"):
+        upd["invitee_phone"] = rec["Contact Phone"]
+    sb.table("appointments").update(upd).eq("id", int(a["id"])).execute()
+    for fn in ("load_appointments", "load_needs_review", "load_leads_with_calls"):
+        f = globals().get(fn)
+        if f is not None and hasattr(f, "clear"):
+            f.clear()
+    st.session_state.pop(f"mms_res_{a['id']}", None)
+    st.session_state["ap_toast"] = f"Linked to MMS lead {row['Lead Id']}" + (f" · assigned to {upd['assigned_rep']}"
+                                                                           if upd.get("assigned_rep") else "")
+
+
+def mms_find_panel(a, auto: bool = False):
+    """'Find in MMS' for a booking with no lead match: two separate searches, company and contact name."""
+    key = f"mms_res_{a['id']}"
+    company, name = (a["company"] or "").strip(), (a["invitee_name"] or "").strip()
+    st.markdown("<div class='dsec'>Find in MMS</div>", unsafe_allow_html=True)
+    st.caption(f"No lead in the database matches this booking yet. Searches MMS for the company "
+               f"**{esc(company or '—')}** and, separately, the contact **{esc(name or '—')}**.")
+    go = st.button("Find in MMS", key=f"mms_go_{a['id']}", icon=":material/travel_explore:", width="stretch")
+    if go or (auto and key not in st.session_state):
+        res = {}
+        with st.spinner("Searching MMS..."):
+            for label, kw in (("Company", {"company": company}), ("Contact name", {"name": name})):
+                if not list(kw.values())[0]:
+                    continue
+                try:
+                    res[label] = mms_search(**kw)
+                except MMSError as e:
+                    res = {"error": str(e)}
+                    break
+        st.session_state[key] = res
+    res = st.session_state.get(key)
+    if res is None:
+        return
+    if "error" in res:
+        st.error(res["error"], icon=":material/error:")
+        return
+    seen = {}
+    for label, rows in res.items():
+        for r in rows:
+            seen.setdefault(r["ID#"], {**r, "_by": []})["_by"].append(label.lower())
+    if not seen:
+        st.info("MMS has no lead for this company or contact name.", icon=":material/search_off:")
+        return
+    st.caption(f"{plural(len(seen), 'lead')} found · pick the right one")
+    for lid, r in list(seen.items())[:10]:
+        with st.container(border=True, key=f"mms_hit_{a['id']}_{lid}"):
+            st.markdown(f"<div class='ap-t'><b>Lead {esc(lid)}</b><span>matched by {esc(' + '.join(r['_by']))}</span></div>"
+                        f"<div class='ap-c'>{esc(r.get('Company', ''))}</div>"
+                        f"<div class='ap-p'>{esc(r.get('Contact Phone', ''))}{' · ' + esc(r.get('Contact Email')) if r.get('Contact Email') else ''}</div>"
+                        f"<div class='ap-p'>Owner <b>{esc(r.get('Lead Owner') or '—')}</b> · {esc(r.get('Status', ''))}"
+                        f" · {esc(r.get('Source', ''))} · edited {esc(r.get('Last Edited', ''))}</div>",
+                        unsafe_allow_html=True)
+            if st.button("Use this lead", key=f"mms_use_{a['id']}_{lid}", type="primary", width="stretch"):
+                use_mms_lead(a, r)
+                st.rerun()
+
+
+
+# =====================================================================================
 # APPOINTMENTS (admin only for now) - Calendly bookings, assigned to reps, linked to the call log
 # =====================================================================================
 APPT_STATUS = {"scheduled": "Scheduled", "showed": "Showed", "no_show": "No-show", "rescheduled": "Rescheduled",
@@ -4216,7 +4454,7 @@ def _assign(appt_id: int, key: str):
 
 
 @st.dialog("Appointment", width="medium", position="right")
-def appt_drawer(a, calls: pd.DataFrame):
+def appt_drawer(a, calls: pd.DataFrame, find: bool = False):
     st.markdown('<div class="pm-drawer"></div>', unsafe_allow_html=True)
     day = a["start"]
     st.markdown(f'<div class="lc-id">{esc(str(a["event_type"] or "").upper())}</div>'
@@ -4258,7 +4496,7 @@ def appt_drawer(a, calls: pd.DataFrame):
                     unsafe_allow_html=True)
         full_lead_button(str(a["lead_id"]), "ap")
     else:
-        st.caption("This booking isn't matched to an MMS lead yet.")
+        mms_find_panel(a, auto=find)
 
 
 CAL_COLORS = ["#1E4FD8", "#0E9F6E", "#C2410C", "#7C3AED", "#0891B2", "#BE185D", "#4D7C0F", "#B91C1C", "#0F766E", "#6D28D9"]
@@ -4406,9 +4644,17 @@ def page_appointments():
                     x.selectbox("Rep", reps, index=None, placeholder="Pick a rep…", key=key, label_visibility="collapsed")
                     y.button("Assign", type="primary", key=f"ap_as_{a['id']}", width="stretch", on_click=_assign,
                              args=(int(a["id"]), key))
+                    if not a["lead_id"]:
+                        st.button("Find in MMS", key=f"ap_find_{a['id']}", icon=":material/travel_explore:",
+                                  width="stretch", on_click=lambda i=int(a["id"]): st.session_state.update(ap_find=i))
         st.write("")
 
     assigned = appts[~appts.index.isin(unassigned.index)]
+    if st.session_state.get("ap_find"):          # "Find in MMS" on a card: open it and search right away
+        pick = appts[appts["id"] == st.session_state.pop("ap_find")]
+        st.session_state.pop("ap_open", None)
+        if not pick.empty:
+            appt_drawer(pick.iloc[0], calls, find=True)
     if view_mode == "Calendar":
         order = reps + sorted(set(appts["assigned_rep"].dropna()) - set(reps))
         colors = {r: CAL_COLORS[i % len(CAL_COLORS)] for i, r in enumerate(order)}
