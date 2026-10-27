@@ -2860,6 +2860,7 @@ def _calls_tab():
     found = view["Lead Id"] != "Not Found"
     table = pd.DataFrame({
         "Date": pd.to_datetime(view["Date/Time"]),
+        "Number": view["To"].map(fmt_phone),
         "Rep": view["From"],
         "Duration": view["Duration"].map(_short_len),
         "Lead ID": view["Lead Id"].where(found, "Not in MMS"),
@@ -2877,7 +2878,8 @@ def _calls_tab():
                       on_select="rerun", selection_mode="single-row",
                       key=f"cl_table_{start}_{end}_{rep}_{team}_{len(table)}",
                       column_config={"Date": st.column_config.DatetimeColumn(format="M/D/YY h:mm A", width=135),
-                                     "Duration": st.column_config.TextColumn(width="small"),
+                                     "Number": st.column_config.TextColumn(width=110),
+                                         "Duration": st.column_config.TextColumn(width="small"),
                                      "Lead ID": st.column_config.TextColumn(width="small"),
                                      "Times Dialed": st.column_config.NumberColumn(
                                          format="%d", width="small",
