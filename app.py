@@ -727,10 +727,11 @@ def lead_card(r, df: pd.DataFrame, inline: bool = False):
     src = (rec.get("Lead Source") or "").upper()
     kv = "".join(f"<span>{k}</span><span>{v}</span>" for k, v in
                  [("Contact", esc(rec.get("Contact Name (phase2)"))), ("Market", esc(rec.get("Media Market")))] if v) + kv
+    dkv = f'<div class="dkv">{kv}</div>' if kv else ""
     st.markdown(
         f'<div class="lc-id">LEAD {esc(lead_id)}{" · " + esc(src) if src else ""}</div>'
         f'<div class="dname">{esc(rec.get("Company In Ad") or rec.get("Company (phase2)") or "")}</div>'
-        f'<div class="bds">{_status_pill(rec.get("Status"))}{confirmed}</div>{warn}{f'<div class="dkv">{kv}</div>' if kv else ""}'
+        f'<div class="bds">{_status_pill(rec.get("Status"))}{confirmed}</div>{warn}{dkv}'
         f'<div class="dsec">Calls to this number · {len(calls)}</div>{timeline_html(calls, 12)}',
         unsafe_allow_html=True)
     b1, b2 = st.columns(2)
@@ -3970,12 +3971,12 @@ def page_assign_commissions():
 # =====================================================================================
 # SHARED TOP BAR: one search box, one team and one date range for every tab
 # =====================================================================================
-G_PRESETS = ["Yesterday", "Tomorrow", "This week", "Last week", "This month", "Custom"]
+G_PRESETS = ["Today", "Tomorrow", "This week", "Last week", "This month", "Custom"]
 
 
 def _g_init():
-    y = date.today() - timedelta(days=1)
-    for k, v in {"g_preset": "Yesterday", "g_week": None, "g_custom": (y, y)}.items():
+    t = date.today()
+    for k, v in {"g_preset": "Today", "g_week": None, "g_custom": (t, t)}.items():
         st.session_state.setdefault(k, v)
     if st.session_state.get("g_week") not in [None] + att_week_options():
         st.session_state["g_week"] = None
@@ -4005,8 +4006,7 @@ def g_range() -> tuple:
     w = ss.get("g_week")
     if p is None and w:
         return w, min(w + timedelta(days=6), today)
-    y = today - timedelta(days=1)
-    return y, y
+    return today, today
 
 
 def g_is_week() -> bool:
@@ -4028,7 +4028,7 @@ def _g_preset_changed():
     elif p is not None:
         ss["g_week"] = None
     elif not ss.get("g_week"):
-        ss["g_preset"] = "Yesterday"
+        ss["g_preset"] = "Today"
 
 
 def _g_week_label(m: date) -> str:
@@ -4036,7 +4036,7 @@ def _g_week_label(m: date) -> str:
 
 
 def _g_week_changed():
-    st.session_state["g_preset"] = None if st.session_state.get("g_week") else "Yesterday"
+    st.session_state["g_preset"] = None if st.session_state.get("g_week") else "Today"
 
 
 def _g_step(n: int):
@@ -4075,7 +4075,7 @@ def top_bar(dates: bool = True, team: bool = False, search: bool = True, future:
     _g_init()
     presets = G_PRESETS if future else [p for p in G_PRESETS if p != "Tomorrow"]   # Tomorrow: Appointments only
     if st.session_state.get("g_preset") not in presets + [None]:
-        st.session_state["g_preset"] = "Yesterday"
+        st.session_state["g_preset"] = "Today"
     if team:
         teams = load_rep_teams()
         team_opts = [EVERYONE] + sorted(teams)
