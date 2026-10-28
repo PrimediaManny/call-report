@@ -332,6 +332,8 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .st.showed, .st.sold { background: #E3F6EA; color: #137A43; } .st.no_show { background: #FDECEA; color: #C0392B; }
 .st.canceled { background: #F1F1F3; color: #5F6168; } .st.rescheduled { background: #FFF4E0; color: #9A5B00; }
 .bd.warn { background: #FDECEA; color: #C0392B; }
+.bd.rfp, .cal-rfp { background: #EDE7FB; color: #6D28D9; }
+.cal-rfp { font-size: .66rem; font-weight: 700; border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
 .un { background: #FFF7EA; border: 1px solid #F5C77A; border-radius: 14px; padding: 12px 14px; }
 .un-c { font-weight: 700; color: var(--pm-ink); font-size: .92rem; margin-top: 2px; }
 .un-m { font-size: .78rem; color: #8a4b00; }
@@ -4669,24 +4671,50 @@ def load_appointments(start: date, end: date) -> pd.DataFrame:
             .order("start_time").execute().data)
     df = pd.DataFrame(data, columns=["id", "invitee_uri", "event_type", "start_time", "end_time", "invitee_name",
                                      "invitee_email", "invitee_phone", "company", "answers", "status", "lead_id",
-                                     "suggested_rep", "assigned_rep", "notes", "booked_at", "notified_rep", "notified_at"])
+                                     "suggested_rep", "assigned_rep", "notes", "booked_at", "notified_rep", "notified_at",
+                                     "meeting_kind", "requested_by", "request_source", "sold_amount"])
     if df.empty:
         return df
     df = df.astype(object).where(df.notna(), None)
+    df["meeting_kind"] = df["meeting_kind"].fillna("lead_appt")
     df["start"] = pd.to_datetime(df["start_time"], utc=True).dt.tz_convert(CENTRAL).dt.tz_localize(None)
     df["phone10"] = df["invitee_phone"].map(_digits10)
-    # bookings imported with a lead but no owner yet: take the owner from the lead in the mms table
+    # the lead's MMS owner (for bookings imported without one) and its MMS status
+    ids = sorted({str(x) for x in df["lead_id"].dropna()})
+    try:
+        recs = {str(r["Lead Id"]): r for r in
+                sb.table("mms").select('"Lead Id", "Lead Owner", "Status"').in_("Lead Id", ids).execute().data} if ids else {}
+    except Exception:
+        recs = {}
+    df["mms_status"] = [recs.get(str(x), {}).get("Status") if x else None for x in df["lead_id"]]
     need = df["lead_id"].notna() & df["suggested_rep"].isna()
     if need.any():
-        ids = sorted({str(x) for x in df.loc[need, "lead_id"]})
-        try:
-            owners = {str(r["Lead Id"]): r["Lead Owner"] for r in
-                      sb.table("mms").select('"Lead Id", "Lead Owner"').in_("Lead Id", ids).execute().data if r.get("Lead Owner")}
-        except Exception:
-            owners = {}
+        owners = {k: r["Lead Owner"] for k, r in recs.items() if r.get("Lead Owner")}
         df.loc[need, "suggested_rep"] = [(_owner_to_rep(owners[str(x)]) if str(x) in owners else None)
                                          for x in df.loc[need, "lead_id"]]
     return df
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def lead_appt_dates(lead_ids: tuple) -> dict:
+    """{lead_id: [start times]} of the leads' Calendly lead appointments (any date), to link an RFP to how it began."""
+    out = {}
+    if not lead_ids:
+        return out
+    rows = (sb.table("appointments").select("lead_id, start_time").eq("meeting_kind", "lead_appt")
+            .in_("lead_id", list(lead_ids)).neq("status", "canceled").order("start_time").execute().data)
+    for r in rows:
+        t = pd.to_datetime(r["start_time"], utc=True).tz_convert(CENTRAL).tz_localize(None)
+        out.setdefault(str(r["lead_id"]), []).append(t)
+    return out
+
+
+def _is_presented(a) -> bool:
+    return a["status"] in ("showed", "sold") or str(a.get("mms_status") or "")[:2] in ("08", "10")
+
+
+def _is_sold(a) -> bool:
+    return a["status"] == "sold" or str(a.get("mms_status") or "")[:2] == "10"
 
 
 def link_calls(appts: pd.DataFrame, calls: pd.DataFrame) -> pd.DataFrame:
@@ -4700,6 +4728,10 @@ def link_calls(appts: pd.DataFrame, calls: pd.DataFrame) -> pd.DataFrame:
         c["_p"] = c["To"].map(_digits10)
         c["_t"] = pd.to_datetime(c["Date/Time"])
     for i, a in appts.iterrows():
+        if a["meeting_kind"] == "rfp":           # Zoom proposal meetings: no phone call to check
+            appts.at[i, "call_status"] = ("canceled" if a["status"] == "canceled" else
+                                          "upcoming" if a["start"] > now else "rfp_past")
+            continue
         hit = pd.DataFrame()
         if not c.empty:
             same = (c["Lead Id"].astype(str) == str(a["lead_id"])) if a["lead_id"] else False
@@ -4732,7 +4764,8 @@ def _appt_badges(a) -> str:
             "canceled": ""}.get(cs, "")
     stt = a["status"] or "scheduled"
     out = f'<span class="st {stt}">{APPT_STATUS.get(stt, stt)}</span>' if stt != "scheduled" else ""
-    return call + out
+    rfp = '<span class="bd rfp">RFP</span>' if a["meeting_kind"] == "rfp" else ""
+    return rfp + call + out
 
 
 def _rep_options() -> list:
@@ -4875,8 +4908,15 @@ def appt_drawer(a, calls: pd.DataFrame, find: bool = False):
                 f'<div class="bds"><span class="bd new">{day:%a %b} {day.day} · {us_time(day, False)}</span>'
                 f'{_appt_badges(a)}{f"<span class=bd>Lead {esc(a.lead_id)}</span>" if a["lead_id"] else ""}</div>',
                 unsafe_allow_html=True)
+    rfp = a["meeting_kind"] == "rfp"
+    firsts = lead_appt_dates((str(a["lead_id"]),)).get(str(a["lead_id"]), []) if rfp and a["lead_id"] else []
+    firsts = [t for t in firsts if t < day]
     kv = [("Contact", a["invitee_name"]), ("Phone", fmt_phone(a["invitee_phone"]) if a["invitee_phone"] else ""),
           ("Email", a["invitee_email"]), ("Lead owner", a["suggested_rep"]),
+          ("Requested by", a["requested_by"] if rfp else ""),
+          ("Lead appt", ", ".join(f"{t:%a %b} {t.day} · {us_time(t, False)}" for t in firsts) if rfp else ""),
+          ("MMS status", a["mms_status"]),
+          ("Sold amount", f"${float(a['sold_amount']):,.0f}" if a["sold_amount"] is not None else ""),
           ("Rep emailed", f"{a['notified_rep']} · {us_time(pd.to_datetime(a['notified_at'], utc=True).tz_convert(CENTRAL).tz_localize(None))}"
            if a["notified_rep"] and a["notified_at"] else ""),
           ("Called", f"{us_time(a['call_at'])} by {a['call_by']} · {a['call_len']}" if a["call_status"] == "called" else "")]
@@ -4896,14 +4936,22 @@ def appt_drawer(a, calls: pd.DataFrame, find: bool = False):
                            placeholder="Unassigned")
         out = c2.selectbox("Show / no-show", stt, index=stt.index(a["status"]) if a["status"] in stt else 0,
                            format_func=lambda s: APPT_STATUS[s])
+        amount = st.number_input("Sold amount ($)", min_value=0.0, step=100.0, format="%.0f",
+                                 value=float(a["sold_amount"]) if a["sold_amount"] is not None else None,
+                                 placeholder="Only for a sale") if rfp else None
         notes = st.text_area("Notes", value=a["notes"] or "", placeholder="Anything management should know…", height=80)
         if st.form_submit_button("Save", type="primary", width="stretch"):
             upd = {"status": out, "notes": notes or None, "updated_at": pd.Timestamp.now("UTC").isoformat()}
-            if rep and rep != a["assigned_rep"]:
+            if rfp:
+                upd["sold_amount"] = amount
+            moved = rep and rep != a["assigned_rep"]
+            if moved:
                 upd.update({"assigned_rep": rep, "assigned_at": pd.Timestamp.now("UTC").isoformat()})
             sb.table("appointments").update(upd).eq("id", int(a["id"])).execute()
             load_appointments.clear()
-            sent = notify_rep(int(a["id"]), None if out == "canceled" else (rep or a["assigned_rep"]))
+            # email only when the rep changes or the meeting is canceled (not for notes / show marks)
+            sent = notify_rep(int(a["id"]), None if out == "canceled" else rep) \
+                if moved or (out == "canceled" and a["status"] != "canceled") else ""
             st.session_state["ap_toast"] = "Appointment saved" + sent
             st.rerun()
     if a["assigned_rep"] and a["status"] != "canceled" and \
@@ -4964,6 +5012,8 @@ def calendar_html(appts: pd.DataFrame, week_start: date, rep_colors: dict) -> st
                      "canceled": '<span class="cal-up">Canceled</span>'}.get(cs, "")
             if not rep and cs != "canceled":
                 badge = '<span class="cal-un">Needs a rep</span>'
+            elif a["meeting_kind"] == "rfp":
+                badge = '<span class="cal-rfp">RFP</span>'
             who = rep.split()[0] if rep else ""
             mark = {"showed": "✓", "sold": "★", "no_show": "✗", "rescheduled": "↻"}.get(stt, "")
             if mark:
@@ -5000,6 +5050,15 @@ def appt_range() -> tuple:
     return start, end
 
 
+AP_KINDS = {"Lead appts": "lead appointments", "RFP proposals": "RFP proposal meetings", "All": "appointments"}
+
+
+def _of_kind(df: pd.DataFrame, kind: str) -> pd.DataFrame:
+    if df.empty or kind == "All":
+        return df
+    return df[(df["meeting_kind"] == "rfp") == (kind == "RFP proposals")]
+
+
 def page_appointments():
     start, end = appt_range()
     toast = st.session_state.pop("ap_toast", None)
@@ -5011,40 +5070,61 @@ def page_appointments():
     h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
     with h1:
         st.title("Appointments")
+        kind = st.segmented_control("Meetings", list(AP_KINDS), default="Lead appts", key="ap_kind",
+                                    label_visibility="collapsed") or "Lead appts"
         when = (f"Week {bweek_number(start)} · " if g_is_week() else "") + \
             (f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}")
-        st.caption(f"Calendly bookings for **{esc(when)}**, assigned to a rep and checked against the call log. "
-                   "New bookings arrive on their own.")
+        st.caption({"Lead appts": f"Calendly lead appointments (salesteam@) for **{esc(when)}**, assigned to a rep and "
+                                  "checked against the call log. New bookings arrive on their own.",
+                    "RFP proposals": f"Final proposal meetings (mediarfpzoom@) for **{esc(when)}**. Presented and sold "
+                                     "come from the MMS lead status or what's marked here.",
+                    "All": f"Lead appointments and RFP proposal meetings for **{esc(when)}**."}[kind])
     view_mode = h2.segmented_control("View", ["Calendar", "By rep", "List"], default="Calendar", key="ap_view",
                                      label_visibility="collapsed") or "Calendar"
-    appts = load_appointments(start, end)
+    appts = _of_kind(load_appointments(start, end), kind)
     if appts.empty:
-        st.info(f"No appointments for {when}.")
+        st.info(f"No {AP_KINDS[kind]} for {when}.")
         return
     calls = load_calls(start, end)
     if not calls.empty:
         calls = apply_rep_names(calls)
     appts = link_calls(appts, calls)
     ps, pe, cmp_label = prev_range(start, end)
-    prev_n = len(load_appointments(ps, pe))
+    prev_n = len(_of_kind(load_appointments(ps, pe), kind).query("status != 'canceled'"))
 
     live = appts[appts["status"] != "canceled"]
-    done = appts[appts["start"] <= pd.Timestamp.now(tz=CENTRAL).tz_localize(None)]
-    done = done[done["status"] != "canceled"]
-    called = int((done["call_status"] == "called").sum())
-    showed = int((appts["status"].isin(["showed", "sold"])).sum())
-    marked = int((appts["status"].isin(["showed", "sold", "no_show"])).sum())
     unassigned = appts[appts["assigned_rep"].isna() | (appts["assigned_rep"] == "")]
-    kpi_cards([
-        {"label": "Booked", "value": f"{len(live):,}{delta_html(len(live), prev_n)}",
-         "note": f"vs {prev_n:,} {cmp_label}" + (f" · {int((appts['status'] == 'canceled').sum())} canceled"
-                                                   if (appts["status"] == "canceled").any() else "")},
-        {"label": "📞 Called on time", "value": f"{called:,}" + (f"<span class='dl'>{called / len(done):.0%}</span>" if len(done) else ""),
-         "note": f"of {len(done):,} past appointments · {len(done) - called:,} not called"},
-        {"label": "Showed", "value": f"{showed:,}", "note": f"{marked:,} marked show / no-show so far"},
-        {"label": "⚑ Unassigned", "value": f"{len(unassigned):,}", "note": "assign them below" if len(unassigned) else "every appointment has a rep",
-         "alert": len(unassigned) > 0},
-    ])
+    booked = {"label": "Booked", "value": f"{len(live):,}{delta_html(len(live), prev_n)}",
+              "note": f"vs {prev_n:,} {cmp_label}" + (f" · {int((appts['status'] == 'canceled').sum())} canceled"
+                                                        if (appts["status"] == "canceled").any() else "")}
+    if kind == "RFP proposals":
+        past = live[live["start"] <= pd.Timestamp.now(tz=CENTRAL).tz_localize(None)]
+        presented = int(past.apply(_is_presented, axis=1).sum()) if len(past) else 0
+        sold = int(live.apply(_is_sold, axis=1).sum()) if len(live) else 0
+        firsts = lead_appt_dates(tuple(sorted({str(x) for x in live["lead_id"].dropna()})))
+        from_appt = int(sum(any(t < a["start"] for t in firsts.get(str(a["lead_id"]), [])) for _, a in live.iterrows()))
+        kpi_cards([
+            booked | {"label": "Proposals booked"},
+            {"label": "Presented", "value": f"{presented:,}" + (f"<span class='dl'>{presented / len(past):.0%}</span>" if len(past) else ""),
+             "note": f"of {len(past):,} past proposal meetings"},
+            {"label": "★ Sold", "value": f"{sold:,}" + (f"<span class='dl up'>{sold / presented:.0%}</span>" if presented else ""),
+             "note": "close rate = sold ÷ presented"},
+            {"label": "From a lead appt", "value": f"{from_appt:,}",
+             "note": f"of {len(live):,} had a Calendly lead appointment first"},
+        ])
+    else:
+        done = live[(live["start"] <= pd.Timestamp.now(tz=CENTRAL).tz_localize(None)) & (live["meeting_kind"] != "rfp")]
+        called = int((done["call_status"] == "called").sum())
+        showed = int((appts["status"].isin(["showed", "sold"])).sum())
+        marked = int((appts["status"].isin(["showed", "sold", "no_show"])).sum())
+        kpi_cards([
+            booked,
+            {"label": "📞 Called on time", "value": f"{called:,}" + (f"<span class='dl'>{called / len(done):.0%}</span>" if len(done) else ""),
+             "note": f"of {len(done):,} past lead appointments · {len(done) - called:,} not called"},
+            {"label": "Showed", "value": f"{showed:,}", "note": f"{marked:,} marked show / no-show so far"},
+            {"label": "⚑ Unassigned", "value": f"{len(unassigned):,}", "note": "assign them below" if len(unassigned) else "every appointment has a rep",
+             "alert": len(unassigned) > 0},
+        ])
 
     reps = _rep_options()
     if not unassigned.empty:
@@ -5099,9 +5179,10 @@ def page_appointments():
         c1.selectbox("Open an appointment", list(labels), index=None, format_func=lambda i: labels[i],
                      placeholder="🔎 Open an appointment…", key="ap_pick", on_change=_ap_pick,
                      label_visibility="collapsed")
+        key_txt = ("RFP = final proposal meeting · " if (appts["meeting_kind"] == "rfp").any() else "") + \
+            ("📞 rep called within 3 hrs · " if (appts["meeting_kind"] != "rfp").any() else "") + "✓ showed · ✗ no-show · ★ sold"
         c2.markdown(f'<div class="cal-legend" style="margin:0">{legend}<span class="sp"></span>'
-                    f'<span>📞 rep called within 3 hrs · ✓ showed · ✗ no-show · ★ sold</span></div>',
-                    unsafe_allow_html=True)
+                    f'<span>{key_txt}</span></div>', unsafe_allow_html=True)
         w = bweek_monday(start)
         while w <= end:
             if len(appts[(appts["start"].dt.date >= w) & (appts["start"].dt.date <= w + timedelta(days=6))]) or g_is_week():
@@ -5122,9 +5203,13 @@ def page_appointments():
             "Number": appts["invitee_phone"].map(lambda v: fmt_phone(v) if v else ""),
             "Rep": appts["assigned_rep"].fillna("Unassigned"), "Lead ID": appts["lead_id"].fillna(""),
             "Call": appts.apply(lambda a: {"called": f"Called {a['call_len']}", "not_called": "Not called",
-                                           "upcoming": "Upcoming", "canceled": "—"}[a["call_status"]], axis=1),
+                                           "upcoming": "Upcoming", "canceled": "—", "rfp_past": "Zoom"}.get(a["call_status"], ""),
+                                axis=1),
             "Show / no-show": appts["status"].map(lambda s: APPT_STATUS.get(s, s)),
         })
+        if (appts["meeting_kind"] == "rfp").any():
+            table.insert(1, "Type", appts["meeting_kind"].map({"rfp": "RFP"}).fillna("Lead appt"))
+            table["MMS status"] = appts["mms_status"].fillna("")
 
         def _css(frame):
             css = pd.DataFrame("", index=frame.index, columns=frame.columns)
@@ -5160,9 +5245,13 @@ def page_appointments():
             ini = "".join(w[0] for w in rep.split()[:2]).upper()
             n_called = int((mine["call_status"] == "called").sum())
             n_past = int(mine["call_status"].isin(["called", "not_called"]).sum())
+            rfps = mine[mine["meeting_kind"] == "rfp"]
+            n_rfp, n_sold = len(rfps), int(rfps.apply(_is_sold, axis=1).sum()) if len(rfps) else 0
+            sub = ([f"called {n_called}/{n_past}"] if len(mine) > n_rfp else []) + \
+                  ([f"{n_rfp} RFP · {n_sold} sold"] if n_rfp else [])
             with col, st.container(border=True, key=f"ap_col_{k + j}"):
                 st.markdown(f'<div class="ap-colh"><div class="av">{ini}</div><div><b>{esc(rep)}</b>'
-                            f'<span>{plural(len(mine), "appointment")} · called {n_called}/{n_past}</span></div></div>',
+                            f'<span>{plural(len(mine), "meeting" if n_rfp else "appointment")} · {" · ".join(sub)}</span></div></div>',
                             unsafe_allow_html=True)
                 last = None
                 for _, a in mine.iterrows():
