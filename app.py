@@ -332,7 +332,8 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .st.showed, .st.sold { background: #E3F6EA; color: #137A43; } .st.no_show { background: #FDECEA; color: #C0392B; }
 .st.canceled { background: #F1F1F3; color: #5F6168; } .st.rescheduled { background: #FFF4E0; color: #9A5B00; }
 .bd.warn { background: #FDECEA; color: #C0392B; }
-.bd.rfp, .cal-rfp { background: #EDE7FB; color: #6D28D9; }
+.bd.rfp { background: #E3F6EA; color: #0B7A55; }
+.cal-rfp { background: #fff; color: #0B7A55; }
 .cal-rfp { font-size: .66rem; font-weight: 700; border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
 .un { background: #FFF7EA; border: 1px solid #F5C77A; border-radius: 14px; padding: 12px 14px; }
 .un-c { font-weight: 700; color: var(--pm-ink); font-size: .92rem; margin-top: 2px; }
@@ -4970,7 +4971,6 @@ def appt_drawer(a, calls: pd.DataFrame, find: bool = False):
         mms_find_panel(a, auto=find)
 
 
-CAL_COLORS = ["#1E4FD8", "#0E9F6E", "#C2410C", "#7C3AED", "#0891B2", "#BE185D", "#4D7C0F", "#B91C1C", "#0F766E", "#6D28D9"]
 CAL_PX = 104          # pixels per hour (each half hour fits one appointment)
 
 
@@ -4980,14 +4980,17 @@ def _tint(hex_color: str, k: float = .88) -> str:
     return "#%02x%02x%02x" % tuple(round(v + (255 - v) * k) for v in (r, g, b))
 
 
-def calendar_html(appts: pd.DataFrame, week_start: date, rep_colors: dict) -> str:
+KIND_COLORS = {"lead_appt": "#1E4FD8", "rfp": "#0E9F6E"}
+
+
+def calendar_html(appts: pd.DataFrame, week_start: date) -> str:
     """One week as a calendar: days across, hours down, one colored card per appointment."""
     days = [week_start + timedelta(days=i) for i in range(7)]
     wk = appts[(appts["start"].dt.date >= days[0]) & (appts["start"].dt.date <= days[-1])]
     show = days[:5] + [d for d in days[5:] if (wk["start"].dt.date == d).any()]   # weekends only when booked
     if len(wk):   # start at the hour of the first appointment, end after the last one (no dead space)
         h0 = min(int(t.hour) for t in wk["start"])
-        h1 = max(int(t.hour) + 1 for t in wk["start"])
+        h1 = max(-(-(t.hour * 60 + t.minute + 30) // 60) for t in wk["start"])   # room for a card starting late in the hour
     else:
         h0, h1 = 8, 12
     height = (h1 - h0) * CAL_PX
@@ -5004,7 +5007,7 @@ def calendar_html(appts: pd.DataFrame, week_start: date, rep_colors: dict) -> st
             n, k = len(same), same.index(j)                            # ... sit side by side
             top = ((a["start"].hour - h0) * 60 + a["start"].minute) / 60 * CAL_PX
             rep = a["assigned_rep"] or ""
-            c = rep_colors.get(rep, "#B45309") if rep else "#B45309"
+            c = KIND_COLORS[a["meeting_kind"]] if rep else "#B45309"     # blue = lead appt, green = RFP
             cs, stt = a["call_status"], a["status"] or "scheduled"
             badge = {"called": f'<span class="cal-ok">📞 {us_time(a["call_at"], False)} · {esc(a["call_len"])}</span>',
                      "not_called": '<span class="cal-no">Not called</span>',
@@ -5166,10 +5169,9 @@ def page_appointments():
         if not pick.empty:
             appt_drawer(pick.iloc[0], calls, find=True)
     if view_mode == "Calendar":
-        order = reps + sorted(set(appts["assigned_rep"].dropna()) - set(reps))
-        colors = {r: CAL_COLORS[i % len(CAL_COLORS)] for i, r in enumerate(order)}
-        present = [r for r in order if (appts["assigned_rep"] == r).any()]
-        legend = "".join(f'<span><i style="background:{colors[r]}"></i>{esc(r)}</span>' for r in present)
+        legend = "".join(f'<span><i style="background:{KIND_COLORS[k]}"></i>{label}</span>'
+                         for k, label in (("lead_appt", "Lead appt"), ("rfp", "RFP proposal"))
+                         if (appts["meeting_kind"] == k).any())
         if not unassigned.empty:
             legend += '<span><i style="background:#E8A33C"></i>Unassigned</span>'
         opts = appts.sort_values("start")
@@ -5190,7 +5192,7 @@ def page_appointments():
                     st.markdown(f'<div class="card-h" style="margin-top:.6rem">{_g_week_label(w)} · '
                                 f'{w:%b} {w.day} – {(w + timedelta(days=6)):%b} {(w + timedelta(days=6)).day}</div>',
                                 unsafe_allow_html=True)
-                st.markdown(calendar_html(appts, w, colors), unsafe_allow_html=True)
+                st.markdown(calendar_html(appts, w), unsafe_allow_html=True)
             w += timedelta(days=7)
         if st.session_state.get("ap_open"):
             pick = appts[appts["id"] == st.session_state.pop("ap_open")]
