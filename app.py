@@ -376,7 +376,11 @@ DT_FMT = st.column_config.DatetimeColumn(format="M/D/YY h:mm A")
 
 # ---------- password gate (only active when APP_PASSWORD is set in secrets) ----------
 # APP_PASSWORD    -> full app (role "admin")
-# VIEWER_PASSWORD -> management: read-only Call Log only (role "viewer")
+# VIEWER_PASSWORD -> management: Call Log (read-only) and Appointments (full, same as admin) (role "viewer")
+def is_viewer() -> bool:
+    return st.session_state.get("role", "admin") == "viewer"
+
+
 def password_ok() -> bool:
     try:
         admin_pw = st.secrets.get("APP_PASSWORD")
@@ -5004,8 +5008,8 @@ def page_appointments():
 # =====================================================================================
 PAGE_CALL_LOG = st.Page(with_bar(page_call_log, team=True), title="Call Log", icon=":material/list_alt:", url_path="call-log")
 
-if st.session_state.get("role", "admin") == "viewer":
-    # management: only the Call Log, no sidebar, nothing that changes data
+if is_viewer():
+    # management: Call Log and Appointments, no sidebar; Appointments works the same as for admin
     st.markdown("<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
                 "[data-testid='stExpandSidebarButton'],[data-testid='stSidebarCollapseButton']"
                 "{display:none !important}</style>", unsafe_allow_html=True)
@@ -5020,11 +5024,17 @@ if st.session_state.get("role", "admin") == "viewer":
                 ".block-container{padding-top:0 !important}.pm-top{margin-top:-1.4rem !important}</style>",
                 unsafe_allow_html=True)
     st.markdown(f'''<div class="pm-top"><img src="{LOGO_WHITE_URI}" alt="Primedia Network"><div class="sp"></div>
-<span class="ro">Management view · read only</span>
+<span class="ro">Management view</span>
 {f'<span class="upd"><span class="dot"></span>{esc(_upd)}</span>' if _upd else ""}</div>''', unsafe_allow_html=True)
-    st.navigation([st.Page(with_bar(page_call_log, team=True, search=False), title="Call Log",
-                           icon=":material/list_alt:", url_path="call-log",
-                           default=True)], position="hidden").run()
+    _vpages = [st.Page(with_bar(page_call_log, team=True, search=False), title="Call Log",
+                       icon=":material/list_alt:", url_path="call-log", default=True),
+               st.Page(with_bar(page_appointments, search=False, future=True), title="Appointments",
+                       icon=":material/event:", url_path="appointments")]
+    _vnav = st.navigation(_vpages, position="hidden")
+    with st.container(key="pm_vnav", horizontal=True):
+        for _p in _vpages:
+            st.page_link(_p, label=_p.title, icon=_p.icon, width="content")
+    _vnav.run()
     st.stop()
 
 st.logo(LOGO_WHITE, size="large")   # admin sidebar logo (management view has its own top bar)
