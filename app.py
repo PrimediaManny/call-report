@@ -4205,13 +4205,49 @@ def _submit_form(s: _rq.Session, page: _rq.Response, form) -> _rq.Response:
     return s.get(action, params=data, timeout=25, verify=s.verify)
 
 
+def _redirect_target(html: str):
+    """A page whose only job is to send the browser elsewhere (meta refresh or a location= script)."""
+    import re as _re
+    soup = _BS(html, "html.parser")
+    if soup.find("table") is not None or soup.find("input", {"type": "password"}):
+        return None
+    m = soup.find("meta", attrs={"http-equiv": _re.compile("^refresh$", _re.I)})
+    if m and "url=" in (m.get("content") or "").lower():
+        return m["content"].split("=", 1)[1].strip(" '\"")
+    js = " ".join(t.get_text() for t in soup.find_all("script"))
+    m2 = _re.search(r"location(?:\.href)?\s*=\s*['\"]([^'\"]+)['\"]|location\.replace\(\s*['\"]([^'\"]+)['\"]", js)
+    if m2 and len(soup.get_text(strip=True)) < 400:
+        return m2.group(1) or m2.group(2)
+    return None
+
+
 def _follow_jumps(s: _rq.Session, r: _rq.Response) -> _rq.Response:
     for _ in range(4):
         form = _auto_form(r.text)
-        if form is None:
-            break
-        r = _submit_form(s, r, form)
+        if form is not None:
+            r = _submit_form(s, r, form)
+            continue
+        target = _redirect_target(r.text)
+        if target:
+            r = s.get(_urljoin(r.url, target), timeout=25, verify=s.verify)
+            continue
+        break
     return r
+
+
+def _page_hint(r: _rq.Response) -> str:
+    """Short, password-free description of a page, for error messages."""
+    soup = _BS(r.text, "html.parser")
+    msg = ""
+    for el in soup.select('[class*="error"], [class*="alert"], [class*="warn"], [id*="error"], [class*="message"]'):
+        t = " ".join(el.get_text(" ", strip=True).split())
+        if t:
+            msg = t[:160]
+            break
+    if not msg:
+        body = soup.body or soup
+        msg = " ".join(body.get_text(" ", strip=True).split())[:160]
+    return f"HTTP {r.status_code} at {_urlparse(r.url).path or '/'}: \"{msg}\""
 
 
 def _mms_login(s: _rq.Session, page: _rq.Response) -> _rq.Response:
@@ -4219,6 +4255,8 @@ def _mms_login(s: _rq.Session, page: _rq.Response) -> _rq.Response:
         user, pwd = st.secrets.get("MMS_USER"), st.secrets.get("MMS_PASSWORD")
     except Exception:
         user = pwd = None
+    user = str(user).strip() if user else user          # stray spaces/newlines from pasting into Secrets
+    pwd = str(pwd).strip("\r\n") if pwd else pwd
     if not user or not pwd:
         raise MMSError("The MMS login isn't set up yet. Add MMS_USER and MMS_PASSWORD to the app's Secrets in Streamlit.")
     form = _login_form(page.text)
@@ -4241,7 +4279,10 @@ def _mms_login(s: _rq.Session, page: _rq.Response) -> _rq.Response:
         data[btn["name"]] = btn.get("value", "")
     action = _urljoin(page.url, form.get("action") or page.url) if getattr(form, "name", "") == "form" else page.url
     method = (form.get("method") or "post").lower() if getattr(form, "name", "") == "form" else "post"
-    r = s.get(action, params=data, timeout=25, verify=s.verify) if method == "get" else s.post(action, data=data, timeout=25, verify=s.verify)
+    pu = _urlparse(page.url)
+    hdrs = {"Referer": page.url, "Origin": f"{pu.scheme}://{pu.netloc}"}   # what a browser sends with the form
+    r = (s.get(action, params=data, headers=hdrs, timeout=25, verify=s.verify) if method == "get"
+         else s.post(action, data=data, headers=hdrs, timeout=25, verify=s.verify))
     return r
 
 
@@ -4365,7 +4406,12 @@ def _mms_session() -> _rq.Session:
         return h["s"]
     _mms_logoff(h)
     s = _rq.Session()
-    s.headers["User-Agent"] = "Mozilla/5.0 (Primedia Call Report)"
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/130.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
     six = now.normalize() + pd.Timedelta(hours=MMS_LOGOFF_HOUR)
     h["s"], h["until"] = s, (six if now < six else now + pd.Timedelta(minutes=30))
     if h.get("timer"):
@@ -4407,12 +4453,17 @@ def _mms_get_locked(s: _rq.Session, h: dict, params: list) -> str:
                                f"IT should check the certificate on {host}.")
         r = _follow_jumps(s, r)                  # logged out: MMS's blank page jumps to /login
         if _login_form(r.text) is not None:
-            _follow_jumps(s, _mms_login(s, r))
+            login_r = _mms_login(s, r)
+            after = _follow_jumps(s, login_r)
             h["logins"] += 1
             r = _follow_jumps(s, s.get(url, params=params, timeout=25, verify=s.verify))
             if _login_form(r.text) is not None:
+                cookies = ", ".join(sorted({c.name for c in s.cookies})) or "none"
+                hops = " → ".join(f"{x.status_code} {_urlparse(x.url).path or '/'}" for x in login_r.history + [login_r])
                 _mms_logoff(h)
-                raise MMSError("MMS didn't accept the login. Check MMS_USER and MMS_PASSWORD in the app's Secrets.")
+                raise MMSError("MMS didn't accept the login. Check MMS_USER and MMS_PASSWORD in the app's Secrets. "
+                               f"Details for troubleshooting — login reply: {hops}; after login: {_page_hint(after)}; "
+                               f"cookies MMS set: {cookies}.")
     except _rq.exceptions.SSLError as e:
         raise MMSError(f"MMS's security certificate couldn't be verified ({_ssl_reason(e)}).")
     except _rq.exceptions.ConnectionError as e:
