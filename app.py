@@ -1597,6 +1597,39 @@ def team_editor(contacts: pd.DataFrame):
                 st.rerun()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_rep_emails() -> dict:
+    """{rep name: email} from the rep_emails table (where appointment notices go)."""
+    try:
+        return {r["rep"]: r["email"] for r in sb.table("rep_emails").select("rep, email").execute().data if r.get("email")}
+    except Exception:
+        return {}
+
+
+def rep_email_editor():
+    """Admin: each Sales Team rep's email, for 'you've been assigned an appointment' notices."""
+    emails = load_rep_emails()
+    reps = sorted(set(load_rep_teams().get("Sales Team", set())) | set(emails), key=str.lower)
+    missing = [r for r in reps if not emails.get(r)]
+    with st.expander(f"Rep emails · {len(reps) - len(missing)} of {len(reps)} set", icon=":material/mail:"):
+        st.caption("When a rep is assigned an appointment, they get an email with a calendar invite at this address. "
+                   "Reps on the Sales Team are listed; leave a box empty to skip that rep.")
+        shown = pd.DataFrame({"Rep": reps, "Email": [emails.get(r, "") for r in reps]})
+        ed = st.data_editor(shown, hide_index=True, width="stretch", num_rows="fixed", key="rep_emails_editor",
+                            disabled=["Rep"],
+                            column_config={"Email": st.column_config.TextColumn(validate=r"^$|^[^@\s]+@[^@\s]+\.[^@\s]+$")})
+        changed = ed[ed["Email"].fillna("").str.strip() != shown["Email"]]
+        if st.button(f"Save {plural(len(changed), 'email')}", type="primary", disabled=changed.empty, key="rep_emails_save"):
+            for _, r in changed.iterrows():
+                e = str(r["Email"] or "").strip()
+                if e:
+                    sb.table("rep_emails").upsert({"rep": r["Rep"], "email": e}).execute()
+                else:
+                    sb.table("rep_emails").delete().eq("rep", r["Rep"]).execute()
+            load_rep_emails.clear()
+            st.rerun()
+
+
 def page_contacts():
     st.title("Contacts")
     st.markdown('<div class="page-sub">Who each extension belongs to</div>', unsafe_allow_html=True)
@@ -1604,6 +1637,7 @@ def page_contacts():
                "MMS Owner Name is only needed when the person's name is spelled differently in MMS.")
     contacts = load_contacts()
     team_editor(contacts)
+    rep_email_editor()
     c1, c2 = st.columns([1, 3])
     if c1.button("Assign New", icon=":material/person_add:", type="primary", width="stretch"):
         assign_new_dialog(contacts)
@@ -4561,7 +4595,8 @@ def use_mms_lead(a, rec: dict):
         if f is not None and hasattr(f, "clear"):
             f.clear()
     st.session_state.pop(f"mms_res_{a['id']}", None)
-    st.session_state["ap_toast"] = f"Linked to MMS lead {row['Lead Id']}" + (f" · assigned to {upd['assigned_rep']}"
+    sent = notify_rep(int(a["id"]), upd["assigned_rep"]) if upd.get("assigned_rep") else ""
+    st.session_state["ap_toast"] = f"Linked to MMS lead {row['Lead Id']}" + (f" · assigned to {upd['assigned_rep']}{sent}"
                                                                            if upd.get("assigned_rep") else "")
 
 
@@ -4634,12 +4669,23 @@ def load_appointments(start: date, end: date) -> pd.DataFrame:
             .order("start_time").execute().data)
     df = pd.DataFrame(data, columns=["id", "invitee_uri", "event_type", "start_time", "end_time", "invitee_name",
                                      "invitee_email", "invitee_phone", "company", "answers", "status", "lead_id",
-                                     "suggested_rep", "assigned_rep", "notes", "booked_at"])
+                                     "suggested_rep", "assigned_rep", "notes", "booked_at", "notified_rep", "notified_at"])
     if df.empty:
         return df
     df = df.astype(object).where(df.notna(), None)
     df["start"] = pd.to_datetime(df["start_time"], utc=True).dt.tz_convert(CENTRAL).dt.tz_localize(None)
     df["phone10"] = df["invitee_phone"].map(_digits10)
+    # bookings imported with a lead but no owner yet: take the owner from the lead in the mms table
+    need = df["lead_id"].notna() & df["suggested_rep"].isna()
+    if need.any():
+        ids = sorted({str(x) for x in df.loc[need, "lead_id"]})
+        try:
+            owners = {str(r["Lead Id"]): r["Lead Owner"] for r in
+                      sb.table("mms").select('"Lead Id", "Lead Owner"').in_("Lead Id", ids).execute().data if r.get("Lead Owner")}
+        except Exception:
+            owners = {}
+        df.loc[need, "suggested_rep"] = [(_owner_to_rep(owners[str(x)]) if str(x) in owners else None)
+                                         for x in df.loc[need, "lead_id"]]
     return df
 
 
@@ -4693,13 +4739,131 @@ def _rep_options() -> list:
     return sorted(load_rep_teams().get("Sales Team", set()))
 
 
+# ---------- rep notices: an email + calendar invite when a rep is assigned ----------
+# Secrets needed: SMTP_USER, SMTP_PASSWORD   (optional: SMTP_HOST, SMTP_PORT; default Microsoft 365)
+def _smtp_conf():
+    try:
+        s = st.secrets
+        user, pwd = s.get("SMTP_USER"), s.get("SMTP_PASSWORD")
+        return (str(s.get("SMTP_HOST") or "smtp.office365.com"), int(s.get("SMTP_PORT") or 587), user, pwd) \
+            if user and pwd else None
+    except Exception:
+        return None
+
+
+def _ics_text(v) -> str:
+    return (str(v or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+            .replace("\r\n", "\\n").replace("\n", "\\n"))
+
+
+def _ics_fold(line: str) -> str:
+    out, cur = [], ""
+    for ch in line:                           # lines over 75 bytes continue on the next line after a space
+        if len((cur + ch).encode()) > 74:
+            out.append(cur)
+            cur = " "
+        cur += ch
+    return "\r\n".join(out + [cur])
+
+
+def _appt_ics(a: dict, organizer: str, to: str, cancel: bool) -> str:
+    utc = lambda t: pd.Timestamp(t).tz_convert("UTC").strftime("%Y%m%dT%H%M%SZ")
+    start = pd.to_datetime(a["start_time"], utc=True)
+    end = pd.to_datetime(a["end_time"], utc=True) if a.get("end_time") else start + pd.Timedelta(minutes=30)
+    now = pd.Timestamp.now("UTC")
+    lines = ["BEGIN:VCALENDAR", "PRODID:-//Primedia Network//Call Report//EN", "VERSION:2.0",
+             f"METHOD:{'CANCEL' if cancel else 'REQUEST'}", "BEGIN:VEVENT",
+             f"UID:appt-{a['id']}@primedianetwork.com", f"SEQUENCE:{int(now.timestamp())}",
+             f"DTSTAMP:{utc(now)}", f"DTSTART:{utc(start)}", f"DTEND:{utc(end)}",
+             f"SUMMARY:{_ics_text(_appt_title(a))}", f"DESCRIPTION:{_ics_text(_appt_details(a))}",
+             f"ORGANIZER:mailto:{organizer}", f"ATTENDEE;ROLE=REQ-PARTICIPANT;RSVP=FALSE:mailto:{to}",
+             f"STATUS:{'CANCELLED' if cancel else 'CONFIRMED'}", "TRANSP:OPAQUE"]
+    if not cancel:
+        lines += ["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Appointment", "TRIGGER:-PT15M", "END:VALARM"]
+    lines += ["END:VEVENT", "END:VCALENDAR"]
+    return "\r\n".join(_ics_fold(x) for x in lines) + "\r\n"
+
+
+def _appt_title(a: dict) -> str:
+    return f"Appointment: {a.get('company') or a.get('invitee_name') or 'Calendly booking'}"
+
+
+def _appt_details(a: dict) -> str:
+    start = pd.to_datetime(a["start_time"], utc=True).tz_convert(CENTRAL).tz_localize(None)
+    rows = [("When", f"{start:%A %b} {start.day} · {us_time(start, False)} Central"), ("Meeting", a.get("event_type")),
+            ("Company", a.get("company")), ("Contact", a.get("invitee_name")),
+            ("Phone", fmt_phone(a["invitee_phone"]) if a.get("invitee_phone") else ""), ("Email", a.get("invitee_email")),
+            ("MMS lead", a.get("lead_id"))]
+    txt = "\n".join(f"{k}: {v}" for k, v in rows if v)
+    if a.get("answers"):
+        txt += f"\n\nWhat they told Calendly:\n{a['answers']}"
+    if a.get("notes"):
+        txt += f"\n\nNotes from management:\n{a['notes']}"
+    return txt
+
+
+def _send_appt_email(a: dict, rep: str, to: str, cancel: bool = False):
+    import smtplib
+    from email.message import EmailMessage
+    host, port, user, pwd = _smtp_conf()
+    first = rep.split()[0] if rep else ""
+    msg = EmailMessage()
+    msg["From"], msg["To"] = user, to
+    msg["Subject"] = ("Canceled — " if cancel else "") + _appt_title(a)
+    intro = ("This appointment is no longer assigned to you and has been taken off your calendar."
+             if cancel else "You've been assigned this appointment. It's on your calendar; please call them on time.")
+    msg.set_content(f"Hi {first},\n\n{intro}\n\n{_appt_details(a)}\n")
+    msg.add_alternative(_appt_ics(a, user, to, cancel), subtype="calendar",
+                        params={"method": "CANCEL" if cancel else "REQUEST"})
+    with smtplib.SMTP(host, port, timeout=20) as s:
+        s.starttls()
+        s.login(user, pwd)
+        s.send_message(msg)
+
+
+def notify_rep(appt_id: int, rep, resend: bool = False) -> str:
+    """Email the newly assigned rep an invite, and the previously emailed rep a cancellation.
+    Returns a short note for the toast (empty when there was nothing to send)."""
+    try:
+        a = sb.table("appointments").select("*").eq("id", int(appt_id)).execute().data[0]
+    except Exception:
+        return ""
+    old = a.get("notified_rep")
+    if (rep == old and not resend) or (not rep and not old):
+        return ""
+    if _smtp_conf() is None:
+        st.session_state["ap_warn"] = "Rep wasn't emailed: add SMTP_USER and SMTP_PASSWORD to the app's Secrets."
+        return ""
+    emails, sent, problems = load_rep_emails(), [], []
+    try:
+        if old and old != rep and emails.get(old):
+            _send_appt_email(a, old, emails[old], cancel=True)
+        if rep:
+            if emails.get(rep):
+                _send_appt_email(a, rep, emails[rep])
+                sent.append(rep.split()[0])
+            else:
+                problems.append(f"no email saved for {rep} (Manage → Contacts → Rep emails)")
+    except Exception as e:
+        problems.append(f"sending failed ({str(e)[:140]})")
+    if sent or not rep:
+        try:
+            sb.table("appointments").update({"notified_rep": rep if sent else None,
+                                             "notified_at": pd.Timestamp.now("UTC").isoformat()}).eq("id", int(appt_id)).execute()
+        except Exception:
+            pass
+    if problems:
+        st.session_state["ap_warn"] = "Rep wasn't emailed: " + "; ".join(problems)
+    return f" · emailed {sent[0]}" if sent else ""
+
+
 def _assign(appt_id: int, key: str):
     rep = st.session_state.get(key)
     if rep:
         sb.table("appointments").update({"assigned_rep": rep, "assigned_at": pd.Timestamp.now("UTC").isoformat(),
                                          "updated_at": pd.Timestamp.now("UTC").isoformat()}).eq("id", appt_id).execute()
         load_appointments.clear()
-        st.session_state["ap_toast"] = f"Assigned to {rep}"
+        st.session_state["ap_toast"] = f"Assigned to {rep}" + notify_rep(appt_id, rep)
 
 
 @st.dialog("Appointment", width="medium", position="right")
@@ -4713,6 +4877,8 @@ def appt_drawer(a, calls: pd.DataFrame, find: bool = False):
                 unsafe_allow_html=True)
     kv = [("Contact", a["invitee_name"]), ("Phone", fmt_phone(a["invitee_phone"]) if a["invitee_phone"] else ""),
           ("Email", a["invitee_email"]), ("Lead owner", a["suggested_rep"]),
+          ("Rep emailed", f"{a['notified_rep']} · {us_time(pd.to_datetime(a['notified_at'], utc=True).tz_convert(CENTRAL).tz_localize(None))}"
+           if a["notified_rep"] and a["notified_at"] else ""),
           ("Called", f"{us_time(a['call_at'])} by {a['call_by']} · {a['call_len']}" if a["call_status"] == "called" else "")]
     rows = "".join(f"<span>{k}</span><span>{esc(v)}</span>" for k, v in kv if v)
     if rows:
@@ -4737,8 +4903,16 @@ def appt_drawer(a, calls: pd.DataFrame, find: bool = False):
                 upd.update({"assigned_rep": rep, "assigned_at": pd.Timestamp.now("UTC").isoformat()})
             sb.table("appointments").update(upd).eq("id", int(a["id"])).execute()
             load_appointments.clear()
-            st.session_state["ap_toast"] = "Appointment saved"
+            sent = notify_rep(int(a["id"]), None if out == "canceled" else (rep or a["assigned_rep"]))
+            st.session_state["ap_toast"] = "Appointment saved" + sent
             st.rerun()
+    if a["assigned_rep"] and a["status"] != "canceled" and \
+            st.button(f"Email {a['assigned_rep'].split()[0]} the invite again", key=f"ap_resend_{a['id']}",
+                      icon=":material/forward_to_inbox:", type="tertiary"):
+        sent = notify_rep(int(a["id"]), a["assigned_rep"], resend=True)
+        load_appointments.clear()
+        st.session_state["ap_toast"] = ("Invite" + sent) if sent else "Invite not sent"
+        st.rerun()
     if a["lead_id"]:
         hist = calls_to_lead_in_month(str(a["lead_id"]), day.date().replace(day=1))
         st.markdown(f"<div class='dsec'>Calls to this lead in {day:%B} · {len(hist)}</div>{timeline_html(hist, 30)}",
@@ -4831,6 +5005,9 @@ def page_appointments():
     toast = st.session_state.pop("ap_toast", None)
     if toast:
         st.toast(toast, icon=":material/check_circle:")
+    warn = st.session_state.pop("ap_warn", None)
+    if warn:
+        st.warning(warn, icon=":material/mail:")
     h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
     with h1:
         st.title("Appointments")
@@ -4880,9 +5057,13 @@ def page_appointments():
             for col, (_, a) in zip(cols, items[k:k + per]):
                 d = a["start"]
                 sug = a["suggested_rep"]
-                note = (f'<div class="sug">Lead {esc(a.lead_id)} · owner {esc(sug)}'
-                        f'{"" if sug in reps else " (not on the Sales Team)"}</div>' if sug else
-                        '<div class="sug" style="color:#B45309">No MMS lead found for this booking</div>')
+                if a["lead_id"] and sug:
+                    note = (f'<div class="sug">Lead {esc(a.lead_id)} · owner {esc(sug)}'
+                            f'{"" if sug in reps else " (not on the Sales Team)"}</div>')
+                elif a["lead_id"]:
+                    note = f'<div class="sug">Lead {esc(a.lead_id)} · no owner found for this lead</div>'
+                else:
+                    note = '<div class="sug" style="color:#B45309">No MMS lead found for this booking</div>'
                 with col:
                     st.markdown(f'<div class="un"><div class="ap-t"><span>{d:%a %b} {d.day} · {us_time(d, False)}</span>'
                                 f'<b>{esc(a["event_type"] or "")}</b></div><div class="un-c">{esc(a["company"] or a["invitee_name"])}</div>'
