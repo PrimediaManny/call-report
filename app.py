@@ -1764,8 +1764,8 @@ def page_upload_leads():
     if up is None:
         return
 
-    raw = pd.read_csv(up, dtype=str, keep_default_na=False, low_memory=False)
-    raw.columns = [str(c).strip() for c in raw.columns]
+    raw = pd.read_csv(up, dtype=str, keep_default_na=False, low_memory=False, encoding="utf-8-sig")
+    raw.columns = [str(c).replace("\ufeff", "").strip() for c in raw.columns]
     if "Lead Id" not in raw.columns:
         st.error("This file has no **Lead Id** column, so it can't be matched to MMS. "
                  f"Columns found: {', '.join(raw.columns)}")
@@ -4142,7 +4142,7 @@ import ssl as _ssl
 import tempfile as _tempfile
 
 MMS_REPORT = "https://mms.primedianetwork.com/marketing/lead_developer_report.php"
-MMS_COLS = ["lead_id", "created", "last_edited", "lead_source", "media_market", "name_company_ad", "person_phone",
+MMS_REPORT_COLS = ["lead_id", "created", "last_edited", "lead_source", "media_market", "name_company_ad", "person_phone",
             "person_email", "lead_rating", "partner_rep", "status"]
 # report header -> MMS table column in Supabase
 MMS_MAP = {"ID#": "Lead Id", "Created": "Lead Started", "Last Edited": "Last Edited", "Source": "Lead Source",
@@ -4168,7 +4168,7 @@ def _mms_params(company: str = "", name: str = "") -> list:
          ("filter_company", company), ("filter_phone", ""), ("filter_name", name), ("filter_url", ""),
          ("bulk_select", ""), ("bulk_select_status", ""), ("startpage", ""), ("pageno", "1"), ("grpperpage", "25"),
          ("sortcol", "last_edited"), ("sortdir", "DESC")]
-    return p + [("show_columns[]", c) for c in MMS_COLS]
+    return p + [("show_columns[]", c) for c in MMS_REPORT_COLS]
 
 
 def _login_form(html: str):
