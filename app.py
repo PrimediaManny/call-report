@@ -19,10 +19,13 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 import pandas as pd
+from pathlib import Path
+
 import streamlit as st
 from supabase import create_client
 
-st.set_page_config(page_title="Call Report", page_icon=":material/call:", layout="wide",
+FAVICON = str(Path(__file__).with_name("favicon.png"))   # Primedia "P" on brand blue
+st.set_page_config(page_title="Primedia · Call Report", page_icon=FAVICON, layout="wide",
                    initial_sidebar_state="expanded")
 
 # ---------- look & feel (Primedia blue, glass buttons) ----------
@@ -38,37 +41,46 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 :root {
   --pm-blue: #1E4FD8; --pm-blue-2: #5B83F2; --pm-navy: #0B1F4D; --pm-light: #EEF3FF;
-  --pm-bg: #F3F6FD; --pm-line: #E6EAF2; --pm-ink: #111827; --pm-mute: #6B7280;
+  --pm-bg: #F7F8FA; --pm-line: #E6E8EC; --pm-ink: #111827; --pm-mute: #6B7280;
+  --pm-shadow: 0 1px 2px rgba(16,24,40,.05), 0 6px 16px rgba(16,24,40,.07), 0 16px 40px rgba(16,24,40,.06);
 }
 html, body, .stApp, .stApp p, .stApp label, .stApp input, .stApp textarea, .stApp h1, .stApp h2, .stApp h3,
 .stApp button p, .stApp li, .kpi, .lc, .applied { font-family: 'Inter', 'Source Sans Pro', sans-serif; }
 
-/* page background with a soft blue glow */
+/* page background: calm neutral with one faint brand-blue glow at the top (same as PODS) */
 .stApp {
-  background:
-    radial-gradient(520px 420px at 38% 4%, rgba(127,162,255,.28), transparent 70%),
-    radial-gradient(480px 380px at 82% 14%, rgba(169,193,255,.38), transparent 70%),
-    radial-gradient(620px 520px at 58% 70%, rgba(91,131,242,.12), transparent 70%),
-    var(--pm-bg) !important;
+  background: radial-gradient(900px 260px at 50% -120px, rgba(59,110,232,.10), transparent 75%), var(--pm-bg) !important;
+  background-attachment: fixed !important;
 }
 [data-testid="stHeader"] { background: transparent; }
+/* no Streamlit branding: hide Deploy / Share / GitHub / menu / running icon (sidebar open-close stays) */
+[data-testid="stToolbarActions"], [data-testid="stAppDeployButton"], [data-testid="stMainMenu"], #MainMenu,
+[data-testid="stStatusWidget"], [data-testid="stDecoration"], footer { display: none !important; }
 .block-container { padding-top: 2.2rem; }
-h1 { font-weight: 700 !important; letter-spacing: -.02em; color: var(--pm-ink); }
+h1 { font-weight: 700 !important; letter-spacing: -.02em; color: var(--pm-ink); padding: .1rem 0 0 !important; }
 
-/* ---- sidebar: navy ---- */
-[data-testid="stSidebar"] { background: var(--pm-navy) !important; }
-[data-testid="stSidebar"] * { color: #D6DFF5; }
-[data-testid="stSidebarNav"] a { border-radius: 10px; padding: 8px 12px; margin: 1px 0; }
-[data-testid="stSidebarNav"] a:hover { background: rgba(255,255,255,.07) !important; }
+/* ---- sidebar: neon blue (same look as the PODS dashboard) ---- */
+[data-testid="stSidebar"] {
+  border-right: 1px solid rgba(91,140,255,.35) !important;
+  background:
+    radial-gradient(420px 320px at 0% 0%, rgba(59,130,246,.45), transparent 70%),
+    radial-gradient(380px 360px at 100% 100%, rgba(0,174,255,.28), transparent 70%),
+    linear-gradient(180deg, #0c1f5c 0%, #0a1440 55%, #08102e 100%) !important;
+  box-shadow: 0 0 28px rgba(59,110,232,.35); }
+[data-testid="stSidebar"] > div { background: transparent !important; }
+[data-testid="stSidebar"] * { color: #cbd5e1; }
+[data-testid="stSidebarNav"] a { border-radius: 8px; padding: 8px 12px; margin: 1px 0; border: 0 !important; }
+[data-testid="stSidebarNav"] a:hover { background: rgba(255,255,255,.06) !important; }
+[data-testid="stSidebarNav"] a:hover * { color: #fff !important; }
+[data-testid="stSidebarNav"] a [data-testid="stIconMaterial"] { color: #64748b !important; }
 [data-testid="stSidebarNav"] a[aria-current="page"] {
-  background: linear-gradient(180deg, rgba(91,131,242,.95), rgba(30,79,216,.85)) !important;
-  border: 1px solid rgba(255,255,255,.45);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.5), 0 6px 16px -4px rgba(30,79,216,.55);
-}
+  background: rgba(91,140,255,.18) !important;
+  box-shadow: inset 3px 0 0 #5b8cff, 0 0 14px rgba(91,140,255,.35) !important; }
 [data-testid="stSidebarNav"] a[aria-current="page"] * { color: #fff !important; font-weight: 600; }
+[data-testid="stSidebarNav"] a[aria-current="page"] [data-testid="stIconMaterial"] { color: #5b8cff !important; }
 [data-testid="stNavSectionHeader"], [data-testid="stNavSectionHeader"] * {
-  color: #6E82B5 !important; font-size: .72rem !important; font-weight: 600 !important;
-  letter-spacing: .08em; text-transform: uppercase; }
+  color: #64748b !important; font-size: 11px !important; font-weight: 600 !important;
+  letter-spacing: .09em; text-transform: uppercase; }
 [data-testid="stSidebar"] [data-testid="stExpander"] details { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.04); }
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] {
   background: rgba(255,255,255,.06) !important; border-color: rgba(255,255,255,.18) !important; }
@@ -126,9 +138,8 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 
 /* frosted form / filter bar */
 [data-testid="stForm"] {
-  background: rgba(255,255,255,.55); border: 1px solid #fff !important; border-radius: 14px;
-  -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
-  box-shadow: 0 8px 24px rgba(30,79,216,.08); }
+  background: #fff; border: 1px solid var(--pm-line) !important; border-radius: 14px;
+  box-shadow: var(--pm-shadow); }
 
 /* tabs as a glass segmented switch */
 [data-testid="stTabs"] [role="tablist"] { gap: 2px; background: rgba(227,233,247,.8); padding: 4px; border-radius: 12px;
@@ -142,7 +153,8 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 
 /* white cards */
 [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]) { border-color: var(--pm-line); }
-[data-testid="stDataFrame"] { background: #fff; border: 1px solid var(--pm-line); border-radius: 14px; padding: 4px; }
+[data-testid="stDataFrame"] { background: #fff; border: 1px solid var(--pm-line); border-radius: 14px; padding: 4px;
+  box-shadow: var(--pm-shadow); }
 [data-testid="stMetric"] { background: #fff; border: 1px solid var(--pm-line); border-radius: 14px; padding: 12px 16px; }
 [data-testid="stMetricLabel"] { opacity: .75; }
 
@@ -150,7 +162,7 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .page-sub { font-size: 1.05rem; font-weight: 600; margin: -0.4rem 0 0.2rem 0; }
 /* ---- KPI cards ---- */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; margin: .4rem 0 1rem 0; }
-.kpi { border: 1px solid var(--pm-line); border-radius: 14px; padding: 16px 18px; background: #fff; }
+.kpi { border: 1px solid var(--pm-line); border-radius: 14px; padding: 16px 18px; background: #fff; box-shadow: var(--pm-shadow); }
 .kpi .kl { font-size: .82rem; color: var(--pm-mute); font-weight: 500; }
 .kpi .kv { font-size: 1.9rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.25; margin-top: 4px; color: var(--pm-navy); }
 .kpi .kd { font-size: .78rem; color: var(--pm-mute); }
@@ -189,8 +201,8 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .pm-top .upd { color: #9FB3E0; font-size: .75rem; }
 .pm-top .upd .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #34D399; margin-right: 6px; }
 /* ---- shared top bar ---- */
-.st-key-pm_topbar { background: rgba(255,255,255,.6); border: 1px solid #fff; border-radius: 14px; padding: 8px 12px;
-  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: 0 8px 24px rgba(30,79,216,.08);
+.st-key-pm_topbar { background: rgba(255,255,255,.78); border: 1px solid var(--pm-line); border-radius: 14px; padding: 8px 12px;
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: var(--pm-shadow);
   margin: -.6rem 0 .9rem 0; }
 .st-key-pm_topbar [data-testid="stTextInputRootElement"], .st-key-pm_topbar [data-baseweb="select"] > div {
   background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(238,243,255,.75)); border-color: #fff; border-radius: 10px; }
@@ -209,7 +221,28 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 .card-h { font-size: 1rem; font-weight: 700; color: var(--pm-ink); margin: 0 0 6px 0; display: flex;
           justify-content: space-between; align-items: baseline; gap: 8px; }
 .card-h span { font-size: .78rem; font-weight: 400; color: var(--pm-mute); }
-.st-key-pm_chart, .st-key-pm_board, .st-key-nr_queue, .st-key-nr_pick { background: #fff; border-radius: 16px !important; }
+.st-key-pm_chart, .st-key-pm_board, .st-key-nr_queue, .st-key-nr_pick { background: #fff; border-radius: 14px !important;
+  border: 1px solid var(--pm-line) !important; box-shadow: var(--pm-shadow); }
+/* chart and rep board: same height, bottoms line up */
+[data-testid="stColumn"]:has(.st-key-pm_chart), [data-testid="stColumn"]:has(.st-key-pm_board) {
+  align-self: stretch !important; height: auto !important; display: flex !important; flex-direction: column; }
+[data-testid="stColumn"]:has(.st-key-pm_chart) > [data-testid="stVerticalBlock"],
+[data-testid="stColumn"]:has(.st-key-pm_board) > [data-testid="stVerticalBlock"] { flex: 1 1 auto !important; height: auto !important; }
+[data-testid="stLayoutWrapper"]:has(> .st-key-pm_chart), [data-testid="stLayoutWrapper"]:has(> .st-key-pm_board) {
+  flex: 1 1 auto !important; height: auto !important; }
+.st-key-pm_chart, .st-key-pm_board { height: 100% !important; }
+/* empty states: calm centered card */
+[class*="st-key-empty_"] { background: #fff; border: 1px solid var(--pm-line); border-radius: 14px; box-shadow: var(--pm-shadow);
+  padding: 44px 24px 40px; align-items: center; }
+.empty-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; }
+.empty-card .ec-ic { font-family: 'Material Symbols Rounded'; font-size: 30px; line-height: 1; color: #8FA0C4; background: #F1F4FA;
+  border-radius: 50%; padding: 14px; margin-bottom: 6px; font-feature-settings: 'liga'; }
+.empty-card .ec-t { font-size: 1.05rem; font-weight: 700; color: var(--pm-ink); }
+.empty-card .ec-n { font-size: .88rem; color: var(--pm-mute); }
+[class*="st-key-empty_"] .stButton { display: flex; justify-content: center; margin-top: .4rem; }
+/* page title row: title and export buttons on one line, compact buttons */
+.st-key-cr_export button { min-height: 2.1rem !important; padding: .2rem .8rem !important; }
+.st-key-cr_export button p { font-size: .85rem !important; }
 /* rep board */
 .rb-row { display: grid; grid-template-columns: 34px 1fr auto 58px; gap: 12px; align-items: center; padding: 7px 0; }
 .rb-av { width: 34px; height: 34px; border-radius: 50%; background: var(--pm-light); color: var(--pm-blue); font-weight: 700;
@@ -380,16 +413,22 @@ DT_FMT = st.column_config.DatetimeColumn(format="M/D/YY h:mm A")
 # ---------- password gate (only active when APP_PASSWORD is set in secrets) ----------
 # APP_PASSWORD    -> full app (role "admin")
 # VIEWER_PASSWORD -> management: Call Log (read-only) and Appointments (full, same as admin) (role "viewer")
+# SETTER_PASSWORD -> appointment setter: Appointments, lead appointments only (role "setter")
 def is_viewer() -> bool:
     return st.session_state.get("role", "admin") == "viewer"
+
+
+def is_setter() -> bool:
+    return st.session_state.get("role", "admin") == "setter"
 
 
 def password_ok() -> bool:
     try:
         admin_pw = st.secrets.get("APP_PASSWORD")
         viewer_pw = st.secrets.get("VIEWER_PASSWORD")
+        setter_pw = st.secrets.get("SETTER_PASSWORD")
     except Exception:
-        admin_pw = viewer_pw = None
+        admin_pw = viewer_pw = setter_pw = None
     if st.session_state.get("authed"):
         return True
     if not admin_pw:
@@ -405,6 +444,9 @@ def password_ok() -> bool:
             st.rerun()
         if viewer_pw and hmac.compare_digest(pw, str(viewer_pw)):
             st.session_state.update(authed=True, role="viewer")
+            st.rerun()
+        if setter_pw and hmac.compare_digest(pw, str(setter_pw)):
+            st.session_state.update(authed=True, role="setter", ap_kind="Lead appts")
             st.rerun()
         st.error("Incorrect password")
     return False
@@ -813,8 +855,9 @@ def rep_order(v: pd.DataFrame) -> list:
     return list(v["From"].fillna("Unknown").astype(str).value_counts().index) if not v.empty else []
 
 
-def calls_chart(v: pd.DataFrame, start: date, end: date, order: list, title: str = "Calls by day"):
-    """Stacked bars of calls per day (per hour for a single day), one color per rep."""
+def calls_chart(v: pd.DataFrame, start: date, end: date, order: list, title: str = "Calls by day", height: int = 230):
+    """Stacked bars of calls per day (per hour for a single day), one color per rep.
+    Every day gets a faint track bar, so quiet days don't leave a gap."""
     import altair as alt
     import json
     single = start == end
@@ -843,17 +886,25 @@ def calls_chart(v: pd.DataFrame, start: date, end: date, order: list, title: str
     colors = (REP_COLORS * 3)[:len(reps)]
     x = alt.X("Day:N", sort=xorder, title=None, axis=alt.Axis(labelAngle=0, labelColor="#6B7280", labelFont="Inter",
                                                               labelFontSize=11, domain=False, ticks=False))
-    bars = alt.Chart(agg).mark_bar(cornerRadius=3, size=min(46, max(8, 520 // max(len(keys), 1)))).encode(
-        x=x, y=alt.Y("Calls:Q", axis=None, stack="zero"),
+    size = min(56, max(10, 560 // max(len(keys), 1)))
+    top = max(int(tot["Calls"].max()), 1)
+    yscale = alt.Scale(domain=[0, top * 1.12])
+    track = alt.Chart(pd.DataFrame({"Day": xorder, "Calls": top * 1.12})).mark_bar(
+        cornerRadius=4, size=size, color="#F1F3F8").encode(x=x, y=alt.Y("Calls:Q", axis=None, scale=yscale))
+    bars = alt.Chart(agg).mark_bar(cornerRadius=4, size=size).encode(
+        x=x, y=alt.Y("Calls:Q", stack="zero", scale=yscale,
+                     axis=alt.Axis(title=None, labels=False, ticks=False, domain=False, tickCount=4,
+                                   grid=True, gridColor="#EEF0F4", gridDash=[3, 3])),
         color=alt.Color("_rep:N", sort=reps, scale=alt.Scale(domain=reps, range=colors),
                         legend=alt.Legend(orient="top", title=None, labelFont="Inter", labelColor="#6B7280",
-                                          symbolType="square", columns=6)),
+                                          symbolType="square", columns=min(4, max(len(reps), 1)),
+                                          labelLimit=0, columnPadding=18, rowPadding=6)),
         order=alt.Order("rank:Q"),
         tooltip=[alt.Tooltip("Day:N", title="Day"), alt.Tooltip("_rep:N", title="Rep"), "Calls:Q"]
     ).transform_calculate(rank=f"indexof({json.dumps(reps)}, datum._rep)")
     labels = alt.Chart(tot).mark_text(dy=-8, font="Inter", fontWeight=600, fontSize=11, color="#111827").encode(
-        x=alt.X("Day:N", sort=xorder), y=alt.Y("Calls:Q", axis=None), text=alt.Text("Calls:Q"))
-    chart = (bars + labels).properties(height=230).configure_view(stroke=None).configure_axis(grid=False)
+        x=alt.X("Day:N", sort=xorder), y=alt.Y("Calls:Q", axis=None, scale=yscale), text=alt.Text("Calls:Q"))
+    chart = (track + bars + labels).properties(height=height).configure_view(stroke=None).configure_axisX(grid=False)
     st.altair_chart(chart, width="stretch", theme=None)
 
 
@@ -902,6 +953,21 @@ def drawer_trigger(tag: str, ident) -> bool:
     return False
 
 
+def _g_this_week():
+    st.session_state["g_preset"] = "This week"
+    _g_preset_changed()
+
+
+def empty_state(key: str, title: str, note: str = "", icon: str = "event_busy", action=None):
+    """Calm, centered 'nothing to show' card (instead of a yellow warning bar).
+    action = (button label, on_click callback) for a one-click way forward."""
+    with st.container(key=f"empty_{key}"):
+        st.markdown(f'<div class="empty-card"><span class="ec-ic">{icon}</span><div class="ec-t">{esc(title)}</div>'
+                    f'<div class="ec-n">{esc(note)}</div></div>', unsafe_allow_html=True)
+        if action:
+            st.button(action[0], key=f"{key}_empty_action", on_click=action[1], type="primary")
+
+
 def page_call_report():
     for k, v in _filter_defaults().items():  # first visit: start every filter at its default
         st.session_state.setdefault(k, v)
@@ -924,12 +990,11 @@ def page_call_report():
         source_options = load_lead_sources()
     st.session_state["f_sources"] = [x for x in (st.session_state.get("f_sources") or []) if x in source_options]
 
-    # ---------- header ----------
-    h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
-    with h1:
-        st.title("Call Report")
-        st.caption(f"Every call for **{esc(g_when())}**, matched to its MMS lead")
-    dl_slot = h2.container()
+    # ---------- header: title with the export buttons on the same line, subtitle under it ----------
+    h1, h2 = st.columns([4, 1.35], vertical_alignment="center")
+    h1.title("Call Report")
+    dl_slot = h2.container(key="cr_export")
+    st.caption(f"Every call for **{esc(g_when())}**, matched to its MMS lead")
 
     # ---------- lead filters (dates and team are in the bar at the top) ----------
     with st.form("call_filters"):
@@ -951,7 +1016,11 @@ def page_call_report():
         lead_filter = " and ".join(x for x in [
             f"from {', '.join(sources)}" if sources else "",
             f"started on or after {started_from:%m/%d/%Y}" if started_from else ""] if x)
-        st.warning("No calls in this date range" + (f" match a lead {lead_filter}." if lead_filter else "."))
+        on_week = st.session_state.get("g_preset") == "This week"
+        empty_state("cr", "No calls yet" if st.session_state.get("g_preset") == "Today" else "No calls in this date range",
+                    (f"No calls match a lead {lead_filter}." if lead_filter else
+                     "Calls show up here as soon as they come in."),
+                    icon="call", action=None if on_week else ("View this week", _g_this_week))
         return
 
     pre = _cr_filter(df, direction, show, team_reps)
@@ -989,13 +1058,16 @@ def page_call_report():
 
     # ---------- chart + rep board ----------
     c1, c2 = st.columns([1.75, 1], gap="medium")
+    board_rows = min(8, int(pre["From"].nunique())) if not pre.empty else 0
     with c1, st.container(border=True, key="pm_chart"):
-        calls_chart(view, start, end, order)
+        # chart grows with the rep board next to it, so the two cards end at the same line
+        calls_chart(view, start, end, order, height=max(230, min(440, 57 * board_rows + 10)))
     with c2, st.container(border=True, key="pm_board"):
         rep_board(pre, ppre, order, rep_pick, cmp_label)
 
     if view.empty:
-        st.info("No calls match these filters.")
+        empty_state("cr_filtered", "No calls match these filters",
+                    "Try a different lead source, direction or rep.", icon="filter_alt_off")
         return
 
     # ---------- table data ----------
@@ -5073,8 +5145,11 @@ def page_appointments():
     h1, h2 = st.columns([3, 1.3], vertical_alignment="bottom")
     with h1:
         st.title("Appointments")
-        kind = st.segmented_control("Meetings", list(AP_KINDS), default="Lead appts", key="ap_kind",
-                                    label_visibility="collapsed") or "Lead appts"
+        if is_setter():                         # the appointment setter only works lead appointments
+            kind = "Lead appts"
+        else:
+            kind = st.segmented_control("Meetings", list(AP_KINDS), default="Lead appts", key="ap_kind",
+                                        label_visibility="collapsed") or "Lead appts"
         when = (f"Week {bweek_number(start)} · " if g_is_week() else "") + \
             (f"{start:%m/%d/%Y}" if start == end else f"{start:%m/%d/%Y} – {end:%m/%d/%Y}")
         st.caption({"Lead appts": f"Calendly lead appointments (salesteam@) for **{esc(when)}**, assigned to a rep and "
@@ -5280,8 +5355,9 @@ def page_appointments():
 # =====================================================================================
 PAGE_CALL_LOG = st.Page(with_bar(page_call_log, team=True), title="Call Log", icon=":material/list_alt:", url_path="call-log")
 
-if is_viewer():
+if is_viewer() or is_setter():
     # management: Call Log and Appointments, no sidebar; Appointments works the same as for admin
+    # setter: Appointments only, lead appointments only (assign reps, set status)
     st.markdown("<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
                 "[data-testid='stExpandSidebarButton'],[data-testid='stSidebarCollapseButton']"
                 "{display:none !important}</style>", unsafe_allow_html=True)
@@ -5296,16 +5372,18 @@ if is_viewer():
                 ".block-container{padding-top:0 !important}.pm-top{margin-top:-1.4rem !important}</style>",
                 unsafe_allow_html=True)
     st.markdown(f'''<div class="pm-top"><img src="{LOGO_WHITE_URI}" alt="Primedia Network"><div class="sp"></div>
-<span class="ro">Management view</span>
+<span class="ro">{"Appointment setter" if is_setter() else "Management view"}</span>
 {f'<span class="upd"><span class="dot"></span>{esc(_upd)}</span>' if _upd else ""}</div>''', unsafe_allow_html=True)
-    _vpages = [st.Page(with_bar(page_call_log, team=True, search=False), title="Call Log",
-                       icon=":material/list_alt:", url_path="call-log", default=True),
-               st.Page(with_bar(page_appointments, search=False, future=True), title="Appointments",
-                       icon=":material/event:", url_path="appointments")]
+    _ap_page = st.Page(with_bar(page_appointments, search=False, future=True), title="Appointments",
+                       icon=":material/event:", url_path="appointments", default=is_setter())
+    _vpages = [_ap_page] if is_setter() else \
+        [st.Page(with_bar(page_call_log, team=True, search=False), title="Call Log",
+                 icon=":material/list_alt:", url_path="call-log", default=True), _ap_page]
     _vnav = st.navigation(_vpages, position="hidden")
-    with st.container(key="pm_vnav", horizontal=True):
-        for _p in _vpages:
-            st.page_link(_p, label=_p.title, icon=_p.icon, width="content")
+    if len(_vpages) > 1:
+        with st.container(key="pm_vnav", horizontal=True):
+            for _p in _vpages:
+                st.page_link(_p, label=_p.title, icon=_p.icon, width="content")
     _vnav.run()
     st.stop()
 
