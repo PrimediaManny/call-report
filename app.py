@@ -582,21 +582,36 @@ if (!window.__glow) {
   const SEL = '[data-testid^="stBaseButton-"]:not([data-testid="stBaseButton-tertiary"]):not([data-testid="stBaseButton-headerNoPadding"]),'
             + 'button[data-variant="segmented_control"], button[data-variant="pills"], [data-testid="stPopoverButton"]';
   const EDGE = 30;   // px from the border where the glow starts
-  let x = -9999, y = -9999, queued = false;
+  // Kept cheap: the button list and their positions are cached and only re-read after the page changes,
+  // scrolls or resizes; each mouse move only touches buttons near the pointer, plus ones that need to go dark.
+  let x = -9999, y = -9999, queued = false, btns = [], rects = null, lit = new Set();
+  const refresh = () => { btns = [...document.querySelectorAll(SEL)]; rects = null; };
+  const measure = () => { rects = btns.map(b => b.getBoundingClientRect()); };
+  let mt = 0;
+  new MutationObserver(() => { clearTimeout(mt); mt = setTimeout(refresh, 120); })
+    .observe(document.body, { childList: true, subtree: true });
+  addEventListener('scroll', () => { rects = null; }, { passive: true, capture: true });
+  addEventListener('resize', () => { rects = null; });
+  refresh();
   const paint = () => {
     queued = false;
-    document.querySelectorAll(SEL).forEach(b => {
-      const r = b.getBoundingClientRect();
-      if (!r.width || r.bottom < -EDGE || r.top > innerHeight + EDGE) return;
+    if (!rects) measure();
+    const now = new Set();
+    for (let n = 0; n < btns.length; n++) {
+      const r = rects[n];
+      if (!r.width) continue;
       // distance from the pointer to the nearest point of the border (inside or outside the button)
       const ox = Math.max(r.left - x, 0, x - r.right), oy = Math.max(r.top - y, 0, y - r.bottom);
-      const inside = !ox && !oy;
-      const d = inside ? Math.min(x - r.left, r.right - x, y - r.top, r.bottom - y) : Math.hypot(ox, oy);
-      const edge = Math.max(0, 1 - d / EDGE);
-      const ang = Math.atan2(y - (r.top + r.height / 2), x - (r.left + r.width / 2)) * 180 / Math.PI + 90;
-      b.style.setProperty('--edge', edge.toFixed(3));
+      if (ox > EDGE || oy > EDGE) continue;                                    // far away: skip
+      const d = !ox && !oy ? Math.min(x - r.left, r.right - x, y - r.top, r.bottom - y) : Math.hypot(ox, oy);
+      if (d >= EDGE) continue;
+      const b = btns[n], ang = Math.atan2(y - (r.top + r.height / 2), x - (r.left + r.width / 2)) * 180 / Math.PI + 90;
+      b.style.setProperty('--edge', (1 - d / EDGE).toFixed(3));
       b.style.setProperty('--ang', ang.toFixed(1) + 'deg');
-    });
+      now.add(b);
+    }
+    lit.forEach(b => { if (!now.has(b)) b.style.setProperty('--edge', '0'); });   // fade out the ones left behind
+    lit = now;
   };
   document.addEventListener('pointermove', e => { x = e.clientX; y = e.clientY; if (!queued) { queued = true; setTimeout(paint, 16); } }, { passive: true });
   document.addEventListener('pointerleave', () => { x = y = -9999; paint(); });
