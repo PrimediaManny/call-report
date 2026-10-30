@@ -4,7 +4,7 @@ Call Report dashboard (Primedia Network)
 Pages
   Reports:  Call Report  - call log (left) matched to the MMS lead (right)
             Lead Search  - search the MMS lead table directly
-  Manage:   Contacts, Upload Calls, Upload Leads
+  Manage:   Contacts, Upload files (Calls and Leads folders)
 
 A call's "To" number is matched (any format: 1-xxx, (xxx) xxx-xxxx, xxx.xxx.xxxx, ...) against the
 phone numbers found in these MMS columns: Phone Number In Ad, Contact Name (phase2), Contact Phone (phase2),
@@ -376,7 +376,87 @@ button[data-variant="segmented_control"]:not([data-selected="true"]) { backgroun
 [class*="st-key-ap_open_"] button { padding: 0 !important; min-height: 1.6rem !important; font-size: .78rem !important;
                                    color: var(--pm-blue) !important; justify-content: flex-end; width: 100%; }
 [class*="st-key-ap_open_"] button p { font-size: .78rem !important; }
+/* ---- Lattice loader: shows whenever the app is loading (page load, tab switch, week change, filters, Refresh).
+   3x3 round cells, orbit pattern, 90ms per step, idle cells at .15, #f5f5f5, live "Thinking 1.2s" timer ---- */
+@property --lt-s { syntax: '<integer>'; inherits: false; initial-value: 0; }
+@property --lt-d { syntax: '<integer>'; inherits: false; initial-value: 0; }
+.lattice-wrap { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 1000000;
+  display: none; align-items: center; gap: 10px; padding: 8px 16px 8px 12px; border-radius: 999px;
+  background: rgba(11,18,32,.9); border: 1px solid rgba(255,255,255,.08); color: #f5f5f5;
+  box-shadow: 0 8px 28px rgba(16,24,40,.25); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  font: 500 14px/1 'Inter', sans-serif; pointer-events: none; }
+.stApp[data-test-script-state="running"] .lattice-wrap, .stApp[data-test-connection-state="CONNECTING"] .lattice-wrap {
+  display: flex; animation: lt-in .2s ease-out .25s both; }   /* short delay: quick clicks don't flash it */
+@keyframes lt-in { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.lattice { display: grid; grid-template-columns: repeat(3, 6px); grid-auto-rows: 6px; gap: 2px; }
+.lattice i { width: 6px; height: 6px; border-radius: 50%; background: #f5f5f5; opacity: .15; }
+.lattice i[style] { animation: lt-orbit .72s linear infinite; animation-delay: calc(var(--o) * 90ms); }
+@keyframes lt-orbit { 0% { opacity: 1; } 30% { opacity: .15; } 100% { opacity: .15; } }
+.lt-label { color: #f5f5f5; }
+.lt-timer { color: rgba(245,245,245,.6); font-variant-numeric: tabular-nums; counter-reset: s var(--lt-s) d var(--lt-d);
+  animation: lt-sec 600s steps(600) -.25s forwards, lt-dec 1s steps(10) -.25s infinite; }
+.lt-timer::after { content: counter(s) "." counter(d) "s"; }
+@keyframes lt-sec { to { --lt-s: 600; } }
+@keyframes lt-dec { to { --lt-d: 10; } }
+[data-testid="stSpinner"] i, [data-testid="stSpinner"] svg { display: none !important; }   /* the lattice replaces Streamlit's spinner icon */
+[data-testid="stElementContainer"]:has(.lattice-wrap) { opacity: 1 !important; filter: none !important; transition: none !important; }
+/* ---- Upload files: folders (solid #3d8bff, white paper, tab on the right, flap opens on click,
+   papers peek on hover, intro pop, tilt .5, bounce .4, size 1.3) ---- */
+[class*="st-key-fold_"] { position: relative; height: 250px !important; min-height: 250px !important; flex: 0 0 250px !important;
+  width: 312px; max-width: 100%; margin: 10px auto 6px;
+  gap: 0 !important; perspective: 900px; transition: transform .55s cubic-bezier(.34,1.45,.64,1);
+  animation: fold-in .7s cubic-bezier(.34,1.45,.64,1) backwards; }
+[class*="st-key-fold_leads"] { animation-delay: .09s; }
+@keyframes fold-in { from { opacity: 0; transform: translateY(18px) scale(.92); } to { opacity: 1; transform: none; } }
+[class*="st-key-fold_"]:hover { transform: rotate(-1.2deg) translateY(-4px); }
+[class*="st-key-fold_"]::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 212px; border-radius: 16px;
+  background: linear-gradient(180deg, #2f7af2, #1f63d4); box-shadow: 0 14px 34px rgba(29,78,216,.28); }
+[class*="st-key-fold_"]::after { content: ""; position: absolute; right: 20px; bottom: 204px; width: 104px; height: 28px;
+  border-radius: 12px 12px 0 0; background: #2f7af2; }
+[class*="st-key-fold_"] > [data-testid="stElementContainer"]:has(.fold-papers) {
+  position: absolute !important; inset: 0; z-index: 1; pointer-events: none; }
+.fold-papers { position: absolute; left: 24px; right: 24px; bottom: 44px; height: 170px; }
+.fold-papers .sheet { position: absolute; left: 0; right: 0; bottom: 0; height: 150px; background: #fff; border-radius: 9px;
+  box-shadow: 0 3px 10px rgba(15,23,42,.14); padding: 12px 14px; text-align: left;
+  transition: transform .6s cubic-bezier(.34,1.5,.64,1); }
+.fold-papers .sheet b { display: block; font: 600 12px/1.3 'Inter', sans-serif; color: #334155; }
+.fold-papers .sheet .ln { display: block; height: 6px; width: 72%; border-radius: 3px; background: #e2e8f0; margin-top: 9px; }
+.fold-papers .sheet .ln.s { width: 48%; }
+.fold-papers .sheet:nth-child(1) { transform: translateY(-24px) rotate(-3deg); }
+.fold-papers .sheet:nth-child(2) { left: 10px; right: 10px; transform: translateY(-14px) rotate(2deg); }
+[class*="st-key-fold_"]:hover .sheet:nth-child(1) { transform: translateY(-44px) rotate(-5deg); }
+[class*="st-key-fold_"]:hover .sheet:nth-child(2) { transform: translateY(-30px) rotate(3.5deg); }
+[class*="st-key-fold_"][class*="_open"] .sheet:nth-child(1) { transform: translateY(-74px) rotate(-6deg); }
+[class*="st-key-fold_"][class*="_open"] .sheet:nth-child(2) { transform: translateY(-54px) rotate(5deg); }
+[class*="st-key-fold_"] > [data-testid="stElementContainer"]:has(.stButton) {
+  position: absolute !important; inset: 0 !important; z-index: 2; pointer-events: none; }
+[class*="st-key-fold_"] .stButton { position: absolute !important; left: 0; right: 0; bottom: 0; }
+[class*="st-key-fold_"] > [data-testid="stElementContainer"]:has([data-testid="stFileUploader"]) {
+  position: absolute !important; inset: 0 !important; z-index: 3; }
+[class*="st-key-fold_"] [data-testid="stFileUploader"], [class*="st-key-fold_"] [data-testid="stFileUploader"] > section,
+[class*="st-key-fold_"] [data-testid="stFileUploaderDropzone"] { height: 250px; }
+[class*="st-key-fold_"] [data-testid="stFileUploaderDropzone"] { opacity: 0; cursor: pointer; padding: 0 !important; }
+[class*="st-key-fold_"] [data-testid="stFileUploader"] > section > :not([data-testid="stFileUploaderDropzone"]),
+[class*="st-key-fold_"] [data-testid="stFileUploaderFile"], [class*="st-key-fold_"] [data-testid="stFileUploaderPagination"] { display: none !important; }
+[class*="st-key-fold_"].drag-on { transform: translateY(-6px) scale(1.03); }
+[class*="st-key-fold_"].drag-on::before { box-shadow: 0 0 0 4px rgba(61,139,255,.35), 0 0 36px rgba(61,139,255,.75); }
+[class*="st-key-fold_"].drag-on .sheet:nth-child(1) { transform: translateY(-44px) rotate(-5deg); }
+[class*="st-key-fold_"].drag-on .sheet:nth-child(2) { transform: translateY(-30px) rotate(3.5deg); }
+[class*="st-key-fold_"].drag-on .stButton button { filter: brightness(1.12); }
+[data-testid="stElementContainer"]:has(.fold-drag-js) { display: none !important; }
+[class*="st-key-fold_"] .stButton button > div { width: 100%; justify-content: flex-start !important; text-align: left; }
+[class*="st-key-fold_"] .stButton button { height: 164px; width: 100%; border: 0 !important; border-radius: 16px !important;
+  background: linear-gradient(180deg, #5aa0ff 0%, #3d8bff 45%, #2f7af2 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 -3px 12px rgba(15,23,42,.10) !important;
+  transform-origin: bottom center; transition: transform .6s cubic-bezier(.34,1.5,.64,1), filter .2s;
+  justify-content: flex-start !important; align-items: flex-end !important; padding: 18px 22px !important; }
+[class*="st-key-fold_"] .stButton button p { color: #fff !important; font-size: 1.35rem !important; font-weight: 700 !important; }
+[class*="st-key-fold_"]:hover .stButton button { transform: rotateX(-14deg); filter: brightness(1.04); }
+[class*="st-key-fold_"][class*="_open"] .stButton button { transform: rotateX(-40deg); }
+.st-key-upload_panel { background: #fff; border: 1px solid var(--pm-line); border-radius: 14px; box-shadow: var(--pm-shadow);
+  padding: 18px 22px; margin-top: 8px; animation: fold-in .45s ease-out backwards; }
 </style>
+<div class="lattice-wrap" role="status" aria-live="polite"><div class="lattice"><i style="--o:0"></i><i style="--o:1"></i><i style="--o:2"></i><i style="--o:7"></i><i></i><i style="--o:3"></i><i style="--o:6"></i><i style="--o:5"></i><i style="--o:4"></i></div><span class="lt-label">Thinking</span><span class="lt-timer"></span></div>
 """, unsafe_allow_html=True)
 
 
@@ -1768,13 +1848,15 @@ def page_contacts():
 # =====================================================================================
 # UPLOAD CALLS
 # =====================================================================================
-def page_upload_calls():
-    st.title("Upload Calls")
-    st.markdown('<div class="page-sub">Add new calls from a CSV export</div>', unsafe_allow_html=True)
+def page_upload_calls(embedded: bool = False, up=None):
+    if not embedded:   # embedded = shown inside the Upload files page; the file was dropped on the Calls folder
+        st.title("Upload Calls")
+        st.markdown('<div class="page-sub">Add new calls from a CSV export</div>', unsafe_allow_html=True)
     st.caption("Columns needed: Direction, To, From, Date/Time, Duration (same format as the call log). "
                "Calls already in the database are skipped, so it's safe to upload a file that overlaps an "
                "earlier one. New calls get the next ID automatically.")
-    up = st.file_uploader("Call log CSV", type=["csv"])
+    if not embedded:
+        up = st.file_uploader("Call log CSV", type=["csv"])
     if up is None:
         return
 
@@ -1868,13 +1950,85 @@ def page_upload_calls():
 # =====================================================================================
 # UPLOAD LEADS
 # =====================================================================================
-def page_upload_leads():
-    st.title("Upload Leads")
-    st.markdown('<div class="page-sub">Update MMS from a lead export</div>', unsafe_allow_html=True)
+UPLOAD_FOLDERS = [   # (key, folder label, papers peeking out of the folder)
+    ("calls", "Calls", ["Vonage call log", "Call export .csv"]),
+    ("leads", "Leads", ["MMS lead export", "Lead export .csv"]),
+]
+
+
+# Highlights a folder while a file is dragged over it (the browser fires no :hover during a drag).
+FOLD_DRAG_JS = """<span class="fold-drag-js"></span><script>
+if (!window.__foldDrag) {
+  window.__foldDrag = true;
+  const folders = () => document.querySelectorAll('[class*="st-key-fold_"]');
+  const off = () => folders().forEach(f => f.classList.remove('drag-on'));
+  document.addEventListener('dragover', e => folders().forEach(f => f.classList.toggle('drag-on', f.contains(e.target))), true);
+  document.addEventListener('dragleave', e => { if (!e.relatedTarget) off(); }, true);
+  document.addEventListener('drop', off, true);
+  document.addEventListener('dragend', off, true);
+}
+</script>"""
+
+
+def _fold_file_key(k: str) -> str:
+    return f"drop_{k}_{st.session_state.get(f'fold_n_{k}', 0)}"   # not "fold_…": that would pick up the folder CSS
+
+
+def _fold_clear(k: str):
+    """Empty a folder: a new key gives its hidden uploader a fresh, empty state."""
+    st.session_state[f"fold_n_{k}"] = st.session_state.get(f"fold_n_{k}", 0) + 1
+
+
+def _fold_picked(k: str):
+    st.session_state["upload_folder"] = k
+    for other, _, _ in UPLOAD_FOLDERS:   # one open folder at a time
+        if other != k:
+            _fold_clear(other)
+
+
+def page_upload_files():
+    """One Upload page: two folders (Calls, Leads). Drop a CSV on a folder (or click it to browse);
+    the folder opens and the usual preview, duplicate check and confirm step show below."""
+    st.title("Upload files")
+    files = {k: st.session_state.get(_fold_file_key(k)) for k, _, _ in UPLOAD_FOLDERS}
+    pick = st.session_state.get("upload_folder")
+    if pick not in files or files[pick] is None:
+        pick = None
+    st.caption("Drag a CSV onto a folder, or click a folder to choose a file." if not pick
+               else "Drop another file on a folder to replace this one.")
+    cols = st.columns(2, gap="large")
+    for col, (k, label, papers) in zip(cols, UPLOAD_FOLDERS):
+        state = "open" if pick == k else "shut"
+        with col, st.container(key=f"fold_{k}_{state}"):
+            sheets = "".join(f'<div class="sheet"><b>{esc(p)}</b><i class="ln"></i><i class="ln s"></i></div>'
+                             for p in papers)
+            st.markdown(f'<div class="fold-papers">{sheets}</div>', unsafe_allow_html=True)
+            st.button(label, key=f"flap_{k}", width="stretch")   # the folder's front flap (looks only)
+            st.file_uploader(f"{label} CSV", type=["csv"], key=_fold_file_key(k), label_visibility="collapsed",
+                             on_change=_fold_picked, args=(k,))
+    st.html(FOLD_DRAG_JS, unsafe_allow_javascript=True)
+    if pick:
+        up = files[pick]
+        with st.container(key="upload_panel"):
+            head, close = st.columns([3, 1], vertical_alignment="center")
+            head.markdown(f"#### {'Calls' if pick == 'calls' else 'Leads'} · {esc(up.name)}")
+            if close.button("Close", icon=":material/close:", key="upload_close", width="stretch",
+                            help="Close the folder and clear this file"):
+                _fold_clear(pick)
+                st.session_state["upload_folder"] = None
+                st.rerun()
+            (page_upload_calls if pick == "calls" else page_upload_leads)(embedded=True, up=up)
+
+
+def page_upload_leads(embedded: bool = False, up=None):
+    if not embedded:   # embedded = shown inside the Upload files page; the file was dropped on the Leads folder
+        st.title("Upload Leads")
+        st.markdown('<div class="page-sub">Update MMS from a lead export</div>', unsafe_allow_html=True)
     st.caption("Rows are matched on Lead Id only: a Lead Id already in MMS is overwritten with the file's "
                "version, a new Lead Id is added. Only the columns in the file are updated, and blank cells in "
                "those columns overwrite with blank. Phone matching for the call log updates automatically.")
-    up = st.file_uploader("Lead export CSV", type=["csv"], key="leads_file")
+    if not embedded:
+        up = st.file_uploader("Lead export CSV", type=["csv"], key="leads_file")
     if up is None:
         return
 
@@ -5420,8 +5574,7 @@ nav = st.navigation({
         st.Page(with_bar(page_toll_sources, dates=False), title="Toll Sources", icon=":material/sell:", url_path="toll-sources"),
         st.Page(with_bar(page_assign_commissions, dates=False), title="Assign Commissions", icon=":material/percent:",
                 url_path="assign-commissions"),
-        st.Page(with_bar(page_upload_calls, dates=False), title="Upload Calls", icon=":material/upload_file:", url_path="upload-calls"),
-        st.Page(with_bar(page_upload_leads, dates=False), title="Upload Leads", icon=":material/group_add:", url_path="upload-leads"),
+        st.Page(with_bar(page_upload_files, dates=False), title="Upload files", icon=":material/folder_open:", url_path="upload-files"),
     ],
 })
 
